@@ -1,0 +1,10 @@
+{
+  "description": "Discover and track game discounts across platforms like Steam and PlayStation with real-time alerts and price comparison features for savvy gamers.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
