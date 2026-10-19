@@ -1,0 +1,7 @@
+{
+  "name": "gameping-workspace",
+  "private": true,
+  "scripts": {
+    "build": "corepack pnpm --dir GamePing run build"
+  }
+}
