@@ -34,7 +34,10 @@ h2 { font-size: 34px; line-height: 1; letter-spacing: -.02em; }
 .logo > span:last-child > span { color: var(--orange); }
 .logo-mark, .modal-logo { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; color: var(--orange); background: linear-gradient(145deg, #1b2d52, #101a2e); border: 1px solid var(--border); font: 700 23px "Rajdhani", sans-serif; transform: skew(-5deg); }
 .search { height: 42px; display: flex; align-items: center; gap: 10px; background: #0a1324; border: 1px solid var(--border); border-radius: 10px; color: var(--muted); padding: 0 14px; flex: 1; max-width: 340px; }
-.search input, .input input { width: 100%; border: 0; background: transparent; color: var(--text); outline: 0; }
+.mobile-search { display: none; }
+.search input, .input input, .input select { width: 100%; border: 0; background: transparent; color: var(--text); outline: 0; }
+.input select { appearance: none; cursor: pointer; }
+.input option { background: #0a1426; color: var(--text); }
 .search input::placeholder, .input input::placeholder { color: #67758f; }
 .nav { display: flex; align-items: center; gap: 26px; margin-left: auto; }
 .nav button, .text-link, .footer-links button { border: 0; background: none; padding: 10px 0; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; transition: color .3s; }
@@ -288,6 +291,8 @@ footer { border-top: 1px solid var(--border); background: #080d16; padding: 55px
 .toast button { border: 0; background: none; color: var(--muted); cursor: pointer; }
 .wishlist-page { min-height: 80vh; padding-bottom: 100px; background: radial-gradient(circle at 50% 0, rgba(27,45,82,.28), transparent 30%); }
 .wishlist-page > .container { padding-top: 60px; }
+.catalog-page { min-height: calc(100vh - 220px); padding: 120px 0 80px; background: radial-gradient(circle at 50% 0, rgba(27,45,82,.22), transparent 38%); }
+.catalog-page .page-title { display: block; }
 .wishlist-title-icon .icon { fill: currentColor; }
 .list-summary { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .empty-list { min-height: 410px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; border: 1px dashed #2a3d60; border-radius: 12px; background: rgba(15,27,51,.5); }
@@ -300,6 +305,7 @@ footer { border-top: 1px solid var(--border); background: #080d16; padding: 55px
 @media (max-width: 1100px) {
   .nav { position: fixed; left: 20px; right: 20px; top: 68px; padding: 15px; background: #0e192c; border: 1px solid var(--border); border-radius: 10px; flex-direction: column; align-items: stretch; opacity: 0; pointer-events: none; transform: translateY(-10px); transition: .3s; }
   .nav-open { opacity: 1; pointer-events: auto; transform: translateY(0); }
+  .nav .mobile-search { display: flex; width: 100%; max-width: none; }
   .menu-button { display: grid; }
   .header .search { max-width: none; }
   .game-grid { grid-template-columns: repeat(2, 1fr); }

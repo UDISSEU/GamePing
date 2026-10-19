@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-type Page = "home" | "game" | "alerts" | "wishlist";
+type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist";
 type IconName =
   | "search"
   | "bell"
@@ -47,6 +47,23 @@ const games = [
   { title: "DUST LEGACY", store: "Steam", old: "R$ 179,90", price: "R$ 44,97", discount: "-75%", image: images.soldier },
   { title: "OUTER STAGE", store: "PlayStation", old: "R$ 249,50", price: "R$ 99,80", discount: "-60%", image: images.stage },
 ];
+
+type PriceAlert = { id: string; title: string; target: string };
+const initialAlerts: PriceAlert[] = games.slice(0, 3).map((game, index) => ({
+  id: `demo-${game.title}`,
+  title: game.title,
+  target: ["70,00", "40,00", "65,00"][index],
+}));
+
+function readSaved<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const saved = window.localStorage.getItem(key);
+    return saved ? JSON.parse(saved) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 const freeGames = [
   { title: "Shadow Tactics", store: "Epic Games", until: "Grátis até 23 mai", image: images.digital },
@@ -117,10 +134,14 @@ function Header({
   page,
   go,
   onLogin,
+  query,
+  onSearch,
 }: {
   page: Page;
   go: (page: Page) => void;
   onLogin: () => void;
+  query: string;
+  onSearch: (query: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -129,11 +150,12 @@ function Header({
         <button className="logo" onClick={() => go("home")} aria-label="GamePing início">
           <span className="logo-mark">G</span><span>GAME<span>PING</span></span>
         </button>
-        <div className="search"><Icon name="search" /><input placeholder="Buscar jogos, lojas e ofertas..." /></div>
+        <label className="search"><Icon name="search" /><input aria-label="Buscar jogos e lojas" value={query} onChange={(event) => onSearch(event.target.value)} placeholder="Buscar jogos, lojas e ofertas..." /></label>
         <nav className={open ? "nav nav-open" : "nav"}>
+          <label className="search mobile-search"><Icon name="search" /><input aria-label="Buscar jogos e lojas" value={query} onChange={(event) => onSearch(event.target.value)} placeholder="Buscar jogos, lojas e ofertas..." /></label>
           <button className={page === "home" ? "active" : ""} onClick={() => { go("home"); setOpen(false); }}>Promoções</button>
-          <button onClick={() => { go("home"); setOpen(false); }}>Grátis</button>
-          <button onClick={() => { go("home"); setOpen(false); }}>Lançamentos</button>
+          <button className={page === "free" ? "active" : ""} onClick={() => { go("free"); setOpen(false); }}>Grátis</button>
+          <button className={page === "new" ? "active" : ""} onClick={() => { go("new"); setOpen(false); }}>Lançamentos</button>
           <button className={page === "wishlist" ? "active" : ""} onClick={() => { go("wishlist"); setOpen(false); }}>Minha lista</button>
         </nav>
         <div className="header-actions">
@@ -246,6 +268,45 @@ function Home({ go, favorites, toggleFavorite }: { go: (page: Page) => void; fav
   );
 }
 
+function SearchResults({ query, go, favorites, toggleFavorite }: { query: string; go: (page: Page) => void; favorites: string[]; toggleFavorite: (title: string) => void }) {
+  const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
+  const results = games.filter((game) => `${game.title} ${game.store}`.toLocaleLowerCase("pt-BR").includes(normalizedQuery));
+  return (
+    <main className="catalog-page">
+      <div className="container">
+        <div className="page-title"><span className="eyebrow">BUSCA</span><h1>Resultados para “{query.trim()}”</h1><p>{results.length} {results.length === 1 ? "jogo encontrado" : "jogos encontrados"} no catálogo demonstrativo.</p></div>
+        {results.length ? <div className="game-grid">{results.map((game) => <GameCard key={game.title} game={game} onClick={() => go("game")} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div> : <div className="empty-list"><h2>Nenhum jogo encontrado</h2><p>Tente buscar pelo nome do jogo ou pela loja.</p><Button onClick={() => go("home")}>Voltar às promoções</Button></div>}
+      </div>
+      <Footer />
+    </main>
+  );
+}
+
+function FreeGamesPage({ go }: { go: (page: Page) => void }) {
+  return (
+    <main className="catalog-page">
+      <div className="container">
+        <div className="page-title"><span className="eyebrow">POR TEMPO LIMITADO</span><h1>Jogos grátis</h1><p>Ofertas gratuitas do catálogo demonstrativo.</p></div>
+        <div className="free-grid">{freeGames.map((game) => <button className="free-card" key={game.title} onClick={() => go("game")}><img src={game.image} alt="" /><div className="free-overlay" /><div className="free-info"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><span className="free-pill">GRÁTIS AGORA</span><p>{game.until}</p></div></button>)}</div>
+      </div>
+      <Footer />
+    </main>
+  );
+}
+
+function NewReleasesPage({ go, favorites, toggleFavorite }: { go: (page: Page) => void; favorites: string[]; toggleFavorite: (title: string) => void }) {
+  const releases = games.slice(3, 6);
+  return (
+    <main className="catalog-page">
+      <div className="container">
+        <div className="page-title"><span className="eyebrow">EXPLORE O CATÁLOGO</span><h1>Lançamentos</h1><p>Jogos em destaque no catálogo demonstrativo.</p></div>
+        <div className="game-grid">{releases.map((game) => <GameCard key={game.title} game={game} onClick={() => go("game")} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div>
+      </div>
+      <Footer />
+    </main>
+  );
+}
+
 function PriceChart() {
   const data = [
     { month: "Mai", price: "R$ 249,90", x: 0, y: 45 },
@@ -354,11 +415,12 @@ function Toggle({ active, setActive }: { active: boolean; setActive: (value: boo
   return <button className={active ? "toggle active" : "toggle"} onClick={() => setActive(!active)} aria-label="Alternar"><span /></button>;
 }
 
-function AlertsPage({ onAlert }: { onAlert: () => void }) {
+function AlertsPage({ alerts, onCreate, onDelete }: { alerts: PriceAlert[]; onCreate: (title: string, target: string) => void; onDelete: (id: string) => void }) {
   const [channels, setChannels] = useState({ email: true, telegram: false, discord: true, push: true });
   const [stores, setStores] = useState({ Steam: true, Epic: true, GOG: false, Xbox: false, PlayStation: false });
-  const [alertMenu, setAlertMenu] = useState<number | null>(null);
-  const [deletedAlerts, setDeletedAlerts] = useState<number[]>([]);
+  const [alertMenu, setAlertMenu] = useState<string | null>(null);
+  const [gameTitle, setGameTitle] = useState("NEON REQUIEM");
+  const [targetPrice, setTargetPrice] = useState("60,00");
   const channelIcons: Record<string, IconName> = { email: "mail", telegram: "telegram", discord: "discord", push: "phone" };
   return (
     <main className="alerts-page">
@@ -367,18 +429,22 @@ function AlertsPage({ onAlert }: { onAlert: () => void }) {
         <section className="active-alerts">
           <SectionHeader title="Alertas ativos" />
           <div className="alert-cards">
-            {games.slice(0, 3).map((game, i) => !deletedAlerts.includes(i) && <div className="alert-card" key={game.title}><img src={game.image} alt="" /><div className="alert-main"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><div className="target"><span>Preço-alvo<strong>{["R$ 70,00", "R$ 40,00", "R$ 65,00"][i]}</strong></span><Icon name="arrow" /><span>Preço atual<strong>{game.price}</strong></span></div></div><div className="alert-status"><span><i />ATIVO</span><button aria-label="Opções" onClick={() => setAlertMenu(alertMenu === i ? null : i)}>•••</button>{alertMenu === i && <div className="alert-menu"><button onClick={() => setAlertMenu(null)}><Icon name="edit" />Editar</button><button className="danger" onClick={() => { setDeletedAlerts([...deletedAlerts, i]); setAlertMenu(null); }}><Icon name="trash" />Excluir</button></div>}</div></div>)}
+            {alerts.map((alert) => {
+              const game = games.find((item) => item.title === alert.title) ?? games[0];
+              return <div className="alert-card" key={alert.id}><img src={game.image} alt="" /><div className="alert-main"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><div className="target"><span>Preço-alvo<strong>R$ {alert.target}</strong></span><Icon name="arrow" /><span>Preço atual<strong>{game.price}</strong></span></div></div><div className="alert-status"><span><i />ATIVO</span><button aria-label={`Opções do alerta de ${game.title}`} aria-expanded={alertMenu === alert.id} onClick={() => setAlertMenu(alertMenu === alert.id ? null : alert.id)}>•••</button>{alertMenu === alert.id && <div className="alert-menu"><button className="danger" onClick={() => { onDelete(alert.id); setAlertMenu(null); }}><Icon name="trash" />Excluir alerta</button></div>}</div></div>;
+            })}
+            {!alerts.length && <div className="empty-list"><h2>Você ainda não tem alertas</h2><p>Escolha um jogo e defina o preço que gostaria de pagar.</p></div>}
           </div>
         </section>
 
         <div className="alerts-layout">
           <section className="form-card">
             <div className="form-head"><span><Icon name="plus" /></span><div><h2>Criar novo alerta</h2><p>Você será avisado assim que o preço chegar lá.</p></div></div>
-            <label>Jogo<div className="input"><Icon name="search" /><input defaultValue="Neon Requiem" /></div></label>
-            <label>Preço-alvo<div className="input prefix"><span>R$</span><input defaultValue="60,00" /></div></label>
+            <label>Jogo<div className="input"><Icon name="search" /><select value={gameTitle} onChange={(event) => setGameTitle(event.target.value)} aria-label="Jogo para o alerta">{games.map((game) => <option key={game.title} value={game.title}>{game.title}</option>)}</select></div></label>
+            <label>Preço-alvo<div className="input prefix"><span>R$</span><input inputMode="decimal" value={targetPrice} onChange={(event) => setTargetPrice(event.target.value)} aria-label="Preço-alvo em reais" /></div></label>
             <fieldset><legend>Lojas</legend><div className="checks">{Object.entries(stores).map(([name, checked]) => <button className={checked ? "check active" : "check"} key={name} onClick={() => setStores({ ...stores, [name]: !checked })}><span>{checked && <Icon name="check" size={14} />}</span>{name}</button>)}</div></fieldset>
             <fieldset><legend>Canais de aviso</legend><div className="channel-list">{Object.entries(channels).map(([name, active]) => <div key={name}><span><Icon name={channelIcons[name]} />{name === "email" ? "E-mail" : name[0].toUpperCase() + name.slice(1)}</span><Toggle active={active} setActive={(value) => setChannels({ ...channels, [name]: value })} /></div>)}</div></fieldset>
-            <Button className="full" onClick={onAlert}><Icon name="bell" />Criar alerta</Button>
+            <Button className="full" onClick={() => { onCreate(gameTitle, targetPrice); }}><Icon name="bell" />Criar alerta</Button>
           </section>
 
           <section className="history-card">
@@ -392,7 +458,7 @@ function AlertsPage({ onAlert }: { onAlert: () => void }) {
   );
 }
 
-function Modal({ type, close, onSuccess }: { type: "login" | "alert"; close: () => void; onSuccess: () => void }) {
+function Modal({ type, close, onSuccess }: { type: "login" | "alert"; close: () => void; onSuccess: (title: string, target: string) => void }) {
   return (
     <div className="modal-backdrop" onMouseDown={close}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
@@ -407,7 +473,7 @@ function Modal({ type, close, onSuccess }: { type: "login" | "alert"; close: () 
           <span className="modal-logo"><Icon name="bell" /></span><h2>Criar alerta de preço</h2><p>Defina seu preço ideal para Neon Requiem.</p>
           <label>Preço-alvo<div className="input prefix"><span>R$</span><input defaultValue="60,00" autoFocus /></div></label>
           <div className="modal-summary"><img src={images.rider} alt="" /><div><strong>Neon Requiem</strong><span>Preço atual: R$ 62,47</span></div></div>
-          <Button className="full" onClick={onSuccess}><Icon name="bell" />Criar alerta</Button>
+          <Button className="full" onClick={() => onSuccess("NEON REQUIEM", "60,00")}><Icon name="bell" />Criar alerta</Button>
         </>}
       </div>
     </div>
@@ -420,21 +486,31 @@ function Footer() {
 
 export default function App() {
   const [page, setPage] = useState<Page>("home");
+  const [query, setQuery] = useState("");
   const [modal, setModal] = useState<"login" | "alert" | null>(null);
   const [toast, setToast] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(["NEON REQUIEM", "NIGHT PROTOCOL"]);
-  const go = (next: Page) => { setPage(next); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const [favorites, setFavorites] = useState<string[]>(() => readSaved("gameping:favorites", ["NEON REQUIEM", "NIGHT PROTOCOL"]));
+  const [alerts, setAlerts] = useState<PriceAlert[]>(() => readSaved("gameping:alerts", initialAlerts));
+  const go = (next: Page) => { setPage(next); setQuery(""); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const toggleFavorite = (title: string) => setFavorites((current) => current.includes(title) ? current.filter((item) => item !== title) : [...current, title]);
   const alertSuccess = () => { setModal(null); setToast(true); window.setTimeout(() => setToast(false), 3500); };
+  const createAlert = (title: string, target: string) => {
+    setAlerts((current) => [{ id: `alert-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title, target: target.trim() || "60,00" }, ...current]);
+    alertSuccess();
+  };
+  useEffect(() => { window.localStorage.setItem("gameping:favorites", JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { window.localStorage.setItem("gameping:alerts", JSON.stringify(alerts)); }, [alerts]);
   useEffect(() => { document.body.style.overflow = modal ? "hidden" : ""; }, [modal]);
   return (
     <div className="app">
-      <Header page={page} go={go} onLogin={() => setModal("login")} />
-      {page === "home" && <Home go={go} favorites={favorites} toggleFavorite={toggleFavorite} />}
-      {page === "game" && <GamePage onAlert={() => setModal("alert")} favorites={favorites} toggleFavorite={toggleFavorite} />}
-      {page === "alerts" && <AlertsPage onAlert={alertSuccess} />}
-      {page === "wishlist" && <WishlistPage favorites={favorites} toggleFavorite={toggleFavorite} go={go} />}
-      {modal && <Modal type={modal} close={() => setModal(null)} onSuccess={alertSuccess} />}
+      <Header page={page} go={go} onLogin={() => setModal("login")} query={query} onSearch={setQuery} />
+      {query.trim() ? <SearchResults query={query} go={go} favorites={favorites} toggleFavorite={toggleFavorite} /> : page === "home" && <Home go={go} favorites={favorites} toggleFavorite={toggleFavorite} />}
+      {!query.trim() && page === "free" && <FreeGamesPage go={go} />}
+      {!query.trim() && page === "new" && <NewReleasesPage go={go} favorites={favorites} toggleFavorite={toggleFavorite} />}
+      {!query.trim() && page === "game" && <GamePage onAlert={() => setModal("alert")} favorites={favorites} toggleFavorite={toggleFavorite} />}
+      {!query.trim() && page === "alerts" && <AlertsPage alerts={alerts} onCreate={createAlert} onDelete={(id) => setAlerts((current) => current.filter((alert) => alert.id !== id))} />}
+      {!query.trim() && page === "wishlist" && <WishlistPage favorites={favorites} toggleFavorite={toggleFavorite} go={go} />}
+      {modal && <Modal type={modal} close={() => setModal(null)} onSuccess={createAlert} />}
       <div className={toast ? "toast show" : "toast"}><span><Icon name="check" /></span><div><strong>Alerta criado!</strong><p>Vamos avisar quando o preço baixar.</p></div><button onClick={() => setToast(false)}><Icon name="x" /></button></div>
     </div>
   );
