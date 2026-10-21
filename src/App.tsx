@@ -468,18 +468,18 @@ function Header({
           <span className="logo-mark">G</span><span>GAME<span>PING</span></span>
         </button>
         {searchBox()}
-        <nav className={open ? "nav nav-open" : "nav"}>
-          {searchBox("mobile-search")}
+        <nav id="primary-navigation" className={open ? "nav nav-open" : "nav"}>
           <button className={page === "home" ? "active" : ""} onClick={() => { go("home"); setOpen(false); }}>Promoções</button>
           <button className={page === "free" ? "active" : ""} onClick={() => { go("free"); setOpen(false); }}>Grátis</button>
           <button className={page === "new" ? "active" : ""} onClick={() => { go("new"); setOpen(false); }}>Destaques</button>
           <button className={page === "wishlist" ? "active" : ""} onClick={() => { go("wishlist"); setOpen(false); }}>Minha lista</button>
           <button className={page === "cart" ? "active" : ""} onClick={() => { go("cart"); setOpen(false); }}>Carrinho ({cartCount})</button>
+          <button className={`mobile-alert-link ${page === "alerts" ? "active" : ""}`} onClick={() => { go("alerts"); setOpen(false); }}><Icon name="bell" />Alertas</button>
         </nav>
         <div className="header-actions">
           <Button onClick={() => go("alerts")}><Icon name="bell" />Ativar alertas</Button>
           {accountEmail ? <button className="account-chip" onClick={onLogout} title="Sair da conta de demonstração"><Icon name="user" />{accountEmail.split("@")[0]} · Sair</button> : <button className="avatar" onClick={onLogin} aria-label="Abrir login"><Icon name="user" /></button>}
-          <button className="menu-button" onClick={() => setOpen(!open)} aria-label="Menu"><Icon name={open ? "x" : "menu"} /></button>
+          <button className="menu-button" onClick={() => setOpen(!open)} aria-label={open ? "Fechar menu" : "Abrir menu"} aria-expanded={open} aria-controls="primary-navigation"><Icon name={open ? "x" : "menu"} /></button>
         </div>
       </div>
     </header>

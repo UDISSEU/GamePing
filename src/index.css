@@ -368,13 +368,12 @@ footer { border-top: 1px solid var(--border); background: #080d16; padding: 55px
 @keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(.98); } }
 
 @media (max-width: 1100px) {
-  .header-inner > .game-search { display: none; }
+  .header-inner { display: grid; grid-template-columns: auto minmax(140px, 1fr) auto; gap: 10px; }
+  .header-inner > .game-search { display: block; }
   .nav { position: fixed; left: 20px; right: 20px; top: 68px; padding: 15px; background: #0e192c; border: 1px solid var(--border); border-radius: 10px; flex-direction: column; align-items: stretch; opacity: 0; pointer-events: none; transform: translateY(-10px); transition: .3s; }
   .nav-open { opacity: 1; pointer-events: auto; transform: translateY(0); }
-  .nav .mobile-search { display: flex; width: 100%; max-width: none; }
-  .nav .mobile-search > .search { max-width: none; }
   .menu-button { display: grid; }
-  .header .search { max-width: none; }
+  .mobile-alert-link { display: none !important; }
   .game-grid { grid-template-columns: repeat(2, 1fr); }
   .live-grid { grid-template-columns: repeat(2, 1fr); }
   .detail-columns { grid-template-columns: 1fr; }
@@ -383,11 +382,17 @@ footer { border-top: 1px solid var(--border); background: #080d16; padding: 55px
 }
 
 @media (max-width: 700px) {
-  :root { --header-height: 64px; }
+  :root { --header-height: 108px; }
   .container { width: calc(100% - 32px); }
-  .header-inner { width: calc(100% - 24px); gap: 10px; }
-  .header .search, .header-actions > .button, .logo > span:last-child { display: none; }
-  .header-actions { margin-left: auto; }
+  .header-inner { width: calc(100% - 24px); grid-template-columns: 1fr auto; grid-template-rows: 40px 40px; align-content: center; gap: 8px 10px; }
+  .header-inner > .game-search { grid-column: 1 / -1; grid-row: 2; width: 100%; max-width: none; }
+  .header .search { height: 40px; max-width: none; }
+  .header-actions { grid-column: 2; grid-row: 1; margin-left: 0; }
+  .header-actions > .button { display: none; }
+  .logo > span:last-child { display: block; font-size: 18px; }
+  .logo-mark { width: 36px; height: 36px; }
+  .nav { top: calc(var(--header-height) + 8px); }
+  .nav .mobile-alert-link { display: flex !important; align-items: center; gap: 8px; }
   .logo-mark { width: 36px; height: 36px; }
   .hero { height: 630px; align-items: flex-end; }
   .hero-image { width: 100%; height: 70%; top: 0; object-position: center; }
