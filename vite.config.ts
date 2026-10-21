@@ -2,6 +2,7 @@ import { defineConfig, loadEnv, type HtmlTagDescriptor, type Plugin } from 'vite
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
+import { nintendoProductsByTitle } from './src/nintendoCatalog'
 
 import siteConfiguration from './.figma/make/site.json'
 
@@ -17,6 +18,11 @@ export default defineConfig(({ mode }) => {
     changeOrigin: true,
     rewrite: (requestPath: string) => requestPath.replace(/^\/steam-api/, '/api'),
   }
+  const steamStoreProxy = {
+    target: 'https://store.steampowered.com',
+    changeOrigin: true,
+    rewrite: (requestPath: string) => requestPath.replace(/^\/steam-store/, ''),
+  }
 
   return {
     base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : '/',
@@ -31,6 +37,8 @@ react(),
       figmaErrorOverlayReplay(),
       figmaReactRefreshBoundaryFallback(),
       figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
+      nintendoPriceProxy(),
+      gameHunterApiProxy(),
       youtubeSearchProxy(youtubeApiKey),
     ],
     resolve: {
@@ -44,6 +52,7 @@ react(),
       strictPort: true,
       proxy: {
         '/steam-api': steamProxy,
+        '/steam-store': steamStoreProxy,
       },
       watch: {
         ignored: [
@@ -56,6 +65,7 @@ react(),
       port: parseInt(process.env.PORT || '8443'),
       proxy: {
         '/steam-api': steamProxy,
+        '/steam-store': steamStoreProxy,
       },
     },
   }
@@ -398,6 +408,204 @@ function figmaMakeKitPlugin(options: { storiesGlob: string | string[] }): Plugin
           next(err as Error)
         }
       })
+    },
+  }
+}
+
+function nintendoPriceProxy(): Plugin {
+  const cache = new Map<string, { expiresAt: number; body: string }>()
+  const imageCache = new Map<string, { expiresAt: number; body: Uint8Array; contentType: string }>()
+  const cacheDuration = 15 * 60 * 1000
+
+  async function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: (error?: Error) => void) {
+    const requestUrl = new URL(req.url || '/', 'http://localhost')
+    if (requestUrl.pathname !== '/nintendo-api/price' && requestUrl.pathname !== '/nintendo-api/image') return next()
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.setHeader('Allow', 'GET')
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ error: 'Only GET requests are allowed.' }))
+      return
+    }
+
+    if (requestUrl.pathname === '/nintendo-api/image') {
+      const id = requestUrl.searchParams.get('id')
+      const product = Object.values(nintendoProductsByTitle).find((item) => item.titleId === id)
+      if (!product) {
+        res.statusCode = 404
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ error: 'Nintendo artwork is not available for this product ID.' }))
+        return
+      }
+
+      const cachedImage = imageCache.get(product.titleId)
+      if (cachedImage && cachedImage.expiresAt > Date.now()) {
+        res.setHeader('Content-Type', cachedImage.contentType)
+        res.setHeader('Cache-Control', 'private, max-age=900')
+        res.end(cachedImage.body)
+        return
+      }
+
+      try {
+        const upstreamResponse = await fetch(product.imageUrl, { signal: AbortSignal.timeout(10000) })
+        if (!upstreamResponse.ok) {
+          res.statusCode = 502
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.end(JSON.stringify({ error: `Nintendo artwork request failed with HTTP ${upstreamResponse.status}.` }))
+          return
+        }
+        const contentType = upstreamResponse.headers.get('content-type') ?? ''
+        if (!contentType.startsWith('image/')) {
+          res.statusCode = 502
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.end(JSON.stringify({ error: 'Nintendo returned an unsupported artwork format.' }))
+          return
+        }
+        const body = new Uint8Array(await upstreamResponse.arrayBuffer())
+        imageCache.set(product.titleId, { expiresAt: Date.now() + cacheDuration, body, contentType })
+        res.setHeader('Content-Type', contentType)
+        res.setHeader('Cache-Control', 'private, max-age=900')
+        res.end(body)
+      } catch (error) {
+        console.error('Nintendo eShop artwork request failed:', error)
+        res.statusCode = 502
+        res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        res.end(JSON.stringify({ error: 'Unable to reach the Nintendo eShop artwork service.' }))
+      }
+      return
+    }
+
+    const ids = requestUrl.searchParams.get('ids')?.split(',') ?? []
+    if (ids.length < 1 || ids.length > 10 || ids.some((id) => !/^700100000\d{5}$/.test(id))) {
+      res.statusCode = 400
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ error: 'One to ten valid Nintendo Switch product IDs are required.' }))
+      return
+    }
+
+    const cacheKey = [...ids].sort().join(',')
+    const cached = cache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.setHeader('Cache-Control', 'private, max-age=900')
+      res.end(cached.body)
+      return
+    }
+
+    const upstreamUrl = new URL('https://api.ec.nintendo.com/v1/price')
+    upstreamUrl.search = new URLSearchParams({
+      country: 'BR',
+      lang: 'pt',
+      ids: ids.join(','),
+    }).toString()
+
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, { signal: AbortSignal.timeout(10000) })
+      const body = await upstreamResponse.text()
+      res.statusCode = upstreamResponse.status
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      if (upstreamResponse.ok) {
+        cache.set(cacheKey, { expiresAt: Date.now() + cacheDuration, body })
+        if (cache.size > 200) cache.delete(cache.keys().next().value!)
+      }
+      res.end(body)
+    } catch (error) {
+      console.error('Nintendo eShop price request failed:', error)
+      res.statusCode = 502
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ error: 'Unable to reach the Nintendo eShop price API.' }))
+    }
+  }
+
+  return {
+    name: 'gameping-nintendo-price-proxy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+  }
+}
+
+function gameHunterApiProxy(): Plugin {
+  const cache = new Map<string, { expiresAt: number; body: string }>()
+  const cacheDuration = 5 * 60 * 1000
+
+  async function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: (error?: Error) => void) {
+    const requestUrl = new URL(req.url || '/', 'http://localhost')
+    if (!requestUrl.pathname.startsWith('/gamehunter-api/')) return next()
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.setHeader('Allow', 'GET')
+      res.end(JSON.stringify({ error: 'Only GET requests are allowed.' }))
+      return
+    }
+
+    let upstreamUrl: URL
+    if (requestUrl.pathname === '/gamehunter-api/search') {
+      const query = requestUrl.searchParams.get('q')?.trim()
+      const limitValue = Number(requestUrl.searchParams.get('limit') || '8')
+      if (!query || query.length > 100 || !Number.isInteger(limitValue) || limitValue < 1 || limitValue > 8) {
+        res.statusCode = 400
+        res.end(JSON.stringify({ error: 'A search query and a result limit from 1 to 8 are required.' }))
+        return
+      }
+      upstreamUrl = new URL('https://gamehunter.com.br/api/search')
+      upstreamUrl.search = new URLSearchParams({ q: query, limit: String(limitValue) }).toString()
+    } else {
+      const gameMatch = requestUrl.pathname.match(/^\/gamehunter-api\/games\/([a-z0-9]+(?:-[a-z0-9]+)*)$/)
+      if (!gameMatch) {
+        res.statusCode = 404
+        res.end(JSON.stringify({ error: 'GameHunter endpoint not found.' }))
+        return
+      }
+      upstreamUrl = new URL(`https://gamehunter.com.br/api/games/${gameMatch[1]}`)
+    }
+
+    const cacheKey = upstreamUrl.toString()
+    const cached = cache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      res.setHeader('Cache-Control', 'private, max-age=300')
+      res.end(cached.body)
+      return
+    }
+
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(12000),
+      })
+      const body = await upstreamResponse.text()
+      if (!upstreamResponse.ok) {
+        res.statusCode = upstreamResponse.status
+        res.end(JSON.stringify({ error: `GameHunter API responded with HTTP ${upstreamResponse.status}.` }))
+        return
+      }
+      if (!upstreamResponse.headers.get('content-type')?.includes('application/json')) {
+        res.statusCode = 502
+        res.end(JSON.stringify({ error: 'GameHunter returned an unsupported response format.' }))
+        return
+      }
+      cache.set(cacheKey, { expiresAt: Date.now() + cacheDuration, body })
+      if (cache.size > 300) cache.delete(cache.keys().next().value!)
+      res.setHeader('Cache-Control', 'private, max-age=300')
+      res.end(body)
+    } catch (error) {
+      console.error('GameHunter API request failed:', error)
+      res.statusCode = 502
+      res.end(JSON.stringify({ error: 'Unable to reach the GameHunter API.' }))
+    }
+  }
+
+  return {
+    name: 'gameping-gamehunter-api-proxy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
     },
   }
 }
