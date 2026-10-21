@@ -1,4 +1,4 @@
-import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
+import { defineConfig, loadEnv, type HtmlTagDescriptor, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
@@ -8,8 +8,15 @@ import siteConfiguration from './.figma/make/site.json'
 
 // Vite config — https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
   // .figma/make/deploy-preview passes `--mode development` for cached-preview builds.
   const emitSourcemaps = mode === 'development'
+  const youtubeApiKey = process.env.YOUTUBE_API_KEY || env.YOUTUBE_API_KEY
+  const steamProxy = {
+    target: 'https://store.steampowered.com',
+    changeOrigin: true,
+    rewrite: (requestPath: string) => requestPath.replace(/^\/steam-api/, '/api'),
+  }
 
   return {
     base: process.env.FIGMA_PUBLIC_URL ? `${process.env.FIGMA_PUBLIC_URL}/` : '/',
@@ -24,6 +31,7 @@ react(),
       figmaErrorOverlayReplay(),
       figmaReactRefreshBoundaryFallback(),
       figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
+      youtubeSearchProxy(youtubeApiKey),
     ],
     resolve: {
       alias: {
@@ -34,6 +42,9 @@ react(),
       host: process.env.FIGMA_DEV_SERVER_HOST || '0.0.0.0',
       port: parseInt(process.env.PORT || '8443'),
       strictPort: true,
+      proxy: {
+        '/steam-api': steamProxy,
+      },
       watch: {
         ignored: [
           '**/.figma/**',
@@ -43,6 +54,9 @@ react(),
     preview: {
       host: process.env.FIGMA_DEV_SERVER_HOST || '0.0.0.0',
       port: parseInt(process.env.PORT || '8443'),
+      proxy: {
+        '/steam-api': steamProxy,
+      },
     },
   }
 })
@@ -86,10 +100,10 @@ function figmaSiteConfiguration(config: FigmaSiteConfiguration): Plugin {
     return html.replace(`<!-- ${slotName} -->`, content)
   }
 
-  const title = config.title ?? "Figma Make App"
+  const title = config.title ?? "GamePing"
   const description = config.description ?? ''
   // Imported HTML keeps its own favicon; new Makes default to the Make product icon.
-  const favicon = config.icons?.icon ?? '/favicon.svg'
+  const favicon = config.icons?.icon ?? '/gameping-icon.svg'
   const socialImage = config.openGraph?.image ?? ''
   const language = sanitizeHtmlValue(config.language) || 'en'
   const googleAnalyticsId = sanitizeHtmlValue(config.analytics?.googleAnalyticsId)
@@ -384,6 +398,83 @@ function figmaMakeKitPlugin(options: { storiesGlob: string | string[] }): Plugin
           next(err as Error)
         }
       })
+    },
+  }
+}
+
+function youtubeSearchProxy(apiKey: string): Plugin {
+  const cache = new Map<string, { expiresAt: number; body: string }>()
+  const cacheDuration = 12 * 60 * 60 * 1000
+
+  async function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: (error?: Error) => void) {
+    const requestUrl = new URL(req.url || '/', 'http://localhost')
+    if (requestUrl.pathname !== '/youtube-api/search') return next()
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.setHeader('Allow', 'GET')
+      res.end(JSON.stringify({ error: 'Only GET requests are allowed.' }))
+      return
+    }
+    const query = requestUrl.searchParams.get('q')?.trim()
+    if (!query || query.length > 200) {
+      res.statusCode = 400
+      res.end(JSON.stringify({ error: 'A search query between 1 and 200 characters is required.' }))
+      return
+    }
+    if (!apiKey) {
+      res.statusCode = 503
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ error: 'YOUTUBE_API_KEY is not configured on the server.' }))
+      return
+    }
+
+    const cacheKey = query.toLocaleLowerCase('en')
+    const cached = cache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      res.setHeader('Content-Type', 'application/json')
+      res.setHeader('Cache-Control', 'private, max-age=3600')
+      res.end(cached.body)
+      return
+    }
+
+    const upstreamUrl = new URL('https://www.googleapis.com/youtube/v3/search')
+    upstreamUrl.search = new URLSearchParams({
+      key: apiKey,
+      q: query,
+      part: 'snippet',
+      type: 'video',
+      maxResults: '5',
+      videoEmbeddable: 'true',
+      videoSyndicated: 'true',
+      safeSearch: 'moderate',
+      order: 'relevance',
+    }).toString()
+
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, { signal: AbortSignal.timeout(10000) })
+      const body = await upstreamResponse.text()
+      res.statusCode = upstreamResponse.status
+      res.setHeader('Content-Type', 'application/json')
+      if (upstreamResponse.ok) {
+        cache.set(cacheKey, { expiresAt: Date.now() + cacheDuration, body })
+        if (cache.size > 500) cache.delete(cache.keys().next().value!)
+      }
+      res.end(body)
+    } catch (error) {
+      console.error('YouTube Data API request failed:', error)
+      res.statusCode = 502
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ error: 'Unable to reach the YouTube Data API.' }))
+    }
+  }
+
+  return {
+    name: 'gameping-youtube-search-proxy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
     },
   }
 }

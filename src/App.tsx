@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { fetchActiveDeals, fetchActiveFreeGames, fetchGameTrailer, fetchSteamArtwork, fetchUsdBrl, fetchYouTubeTrailer, gameCategories, searchGameCatalog, type FreeGame, type GameCategory, type GamePreview, type PromoGame } from "./promotions";
 
-type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist";
+type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist" | "cart";
 type IconName =
   | "search"
   | "bell"
@@ -20,7 +21,10 @@ type IconName =
   | "instagram"
   | "youtube"
   | "edit"
-  | "trash";
+  | "trash"
+  | "cart";
+type SortOrder = "popular" | "price-asc" | "price-desc";
+type SavedCartItem = { gameId: string; title: string; image: string; url: string; appUrl?: string; store: string; price: string; priceValue: number };
 
 const images = {
   rider:
@@ -39,21 +43,7 @@ const images = {
     "https://images.unsplash.com/photo-1610232801646-58c90c3c5355?auto=format&fit=crop&w=900&q=85",
 };
 
-const games = [
-  { title: "NEON REQUIEM", store: "Steam", old: "R$ 249,90", price: "R$ 62,47", discount: "-75%", image: images.rider },
-  { title: "VOID RUNNER", store: "Epic", old: "R$ 149,90", price: "R$ 29,98", discount: "-80%", image: images.purple },
-  { title: "NIGHT PROTOCOL", store: "GOG", old: "R$ 199,90", price: "R$ 59,97", discount: "-70%", image: images.alley },
-  { title: "CHROMA DISTRICT", store: "Xbox", old: "R$ 299,90", price: "R$ 89,97", discount: "-70%", image: images.neon },
-  { title: "DUST LEGACY", store: "Steam", old: "R$ 179,90", price: "R$ 44,97", discount: "-75%", image: images.soldier },
-  { title: "OUTER STAGE", store: "PlayStation", old: "R$ 249,50", price: "R$ 99,80", discount: "-60%", image: images.stage },
-];
-
 type PriceAlert = { id: string; title: string; target: string };
-const initialAlerts: PriceAlert[] = games.slice(0, 3).map((game, index) => ({
-  id: `demo-${game.title}`,
-  title: game.title,
-  target: ["70,00", "40,00", "65,00"][index],
-}));
 
 function readSaved<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -65,11 +55,9 @@ function readSaved<T>(key: string, fallback: T): T {
   }
 }
 
-const freeGames = [
-  { title: "Shadow Tactics", store: "Epic Games", until: "Grátis até 23 mai", image: images.digital },
-  { title: "Neon Divide", store: "GOG", until: "Grátis por 2 dias", image: images.neon },
-  { title: "Dustfront", store: "Steam", until: "Fim de semana grátis", image: images.soldier },
-];
+function openOffer(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
@@ -92,6 +80,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     youtube: <><path d="M21 8.3a2.8 2.8 0 0 0-2-2C17.2 6 12 6 12 6s-5.2 0-7 .3a2.8 2.8 0 0 0-2 2A29 29 0 0 0 3 12a29 29 0 0 0 .3 3.7 2.8 2.8 0 0 0 2 2c1.7.3 6.9.3 6.9.3s5.2 0 7-.3a2.8 2.8 0 0 0 2-2 29 29 0 0 0 .3-3.7 29 29 0 0 0-.5-3.7Z" /><path d="m10 15 5-3-5-3Z" /></>,
     edit: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></>,
     trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6" /></>,
+    cart: <><path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.6L22 8H6" /><circle cx="10" cy="21" r="1" /><circle cx="18" cy="21" r="1" /></>,
   };
   return <svg aria-hidden="true" className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{paths[name]}</svg>;
 }
@@ -114,8 +103,228 @@ function StoreTag({ children }: { children: ReactNode }) {
   return <span className="store-tag"><span className="store-dot" />{children}</span>;
 }
 
+function GameArtwork({ src, steamAppId, hero = false, className, alt = "" }: { src: string; steamAppId?: string; hero?: boolean; className?: string; alt?: string }) {
+  const [imageSrc, setImageSrc] = useState(src);
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setImageSrc(src);
+    if (!steamAppId) return () => { cancelled = true; };
+
+    const loadArtwork = () => {
+      void fetchSteamArtwork(steamAppId, hero)
+        .then((artwork) => {
+          if (!cancelled && artwork) setImageSrc(artwork);
+        })
+        .catch(() => {
+          if (!cancelled) setImageSrc(src);
+        });
+    };
+    const image = imageRef.current;
+    if (!hero && image && "IntersectionObserver" in window) {
+      const observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          loadArtwork();
+        }
+      }, { rootMargin: "300px" });
+      observer.observe(image);
+      return () => {
+        cancelled = true;
+        observer.disconnect();
+      };
+    }
+    loadArtwork();
+    return () => { cancelled = true; };
+  }, [hero, src, steamAppId]);
+
+  return <img ref={imageRef} className={className} src={imageSrc} alt={alt} loading={hero ? "eager" : "lazy"} onError={() => { if (imageSrc !== src) setImageSrc(src); }} />;
+}
+
 function Discount({ children, historic = false }: { children: ReactNode; historic?: boolean }) {
   return <span className={historic ? "discount historic" : "discount"}>{historic && <Icon name="chart" size={13} />}{children}</span>;
+}
+
+let hlsPlayerPromise: Promise<typeof import("hls.js/light")> | null = null;
+
+function loadHlsPlayer() {
+  hlsPlayerPromise ??= import("hls.js/light");
+  return hlsPlayerPromise;
+}
+
+function useGamePreview(game: { title: string; steamAppId?: string }, active: boolean, enabled = true) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const warmupRef = useRef<HTMLElement>(null);
+  const setWarmupRef = useCallback((element: HTMLElement | null) => { warmupRef.current = element; }, []);
+  const startLoadingRef = useRef<() => void>(() => {});
+  const fallbackRef = useRef<() => void>(() => {});
+  const [source, setSource] = useState<GamePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [previewLoaded, setPreviewLoaded] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let requested = false;
+    let cancelled = false;
+    setSource(null);
+    setPreviewLoading(false);
+    setPreviewPlaying(false);
+    setPreviewLoaded(false);
+    setPreviewError("");
+    const loadTrailer = () => {
+      if (requested || !enabled) return;
+      requested = true;
+      setPreviewLoading(true);
+      setPreviewError("");
+      fetchGameTrailer(game.title, game.steamAppId, controller.signal)
+        .then((preview) => {
+          if (cancelled) return;
+          setSource(preview);
+          if (!preview) setPreviewError("Trailer não encontrado na Steam ou no YouTube.");
+          else if (preview.type !== "youtube") void loadHlsPlayer().catch((error: unknown) => {
+            if (!cancelled) setPreviewError(`Não foi possível preparar o player: ${String(error)}`);
+          });
+        })
+        .catch((error: unknown) => {
+          if (!cancelled && !controller.signal.aborted) setPreviewError(`Não foi possível carregar o trailer: ${String(error)}`);
+        })
+        .finally(() => {
+          if (!cancelled) setPreviewLoading(false);
+        });
+    };
+    startLoadingRef.current = loadTrailer;
+
+    const target = warmupRef.current;
+    if (enabled && target && "IntersectionObserver" in window) {
+      const observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadTrailer();
+          observer.disconnect();
+        }
+      }, { rootMargin: "300px" });
+      observer.observe(target);
+      return () => {
+        cancelled = true;
+        controller.abort();
+        observer.disconnect();
+      };
+    }
+    if (enabled) loadTrailer();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [enabled, game.steamAppId, game.title]);
+
+  useEffect(() => {
+    if (active) startLoadingRef.current();
+  }, [active]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!active || !source || source.type === "youtube" || !video) return;
+
+    let cancelled = false;
+    let fallbackRequested = false;
+    const fallbackController = new AbortController();
+    const fallbackToYouTube = () => {
+      if (cancelled || fallbackRequested) return;
+      fallbackRequested = true;
+      setPreviewPlaying(false);
+      setPreviewLoaded(false);
+      setPreviewError("Trailer Steam falhou; tentando YouTube...");
+      void fetchYouTubeTrailer(game.title, fallbackController.signal)
+        .then((fallback) => {
+          if (cancelled) return;
+          if (fallback) {
+            setPreviewError("");
+            setSource(fallback);
+          } else {
+            setPreviewError("Trailer Steam falhou e não foi encontrado um trailer correspondente no YouTube.");
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled && !fallbackController.signal.aborted) setPreviewError(`Trailer Steam falhou. ${String(error)}`);
+        });
+    };
+    fallbackRef.current = fallbackToYouTube;
+
+    if (source.type === "mp4" || video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = source.url;
+      void video.play().catch(() => setPreviewError("O navegador não conseguiu iniciar a prévia."));
+      return () => {
+        cancelled = true;
+        fallbackController.abort();
+        if (fallbackRef.current === fallbackToYouTube) fallbackRef.current = () => {};
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+
+    let hls: import("hls.js").default | undefined;
+    void loadHlsPlayer().then(({ default: Hls }) => {
+      if (cancelled) return;
+      if (!Hls.isSupported()) {
+        fallbackToYouTube();
+        return;
+      }
+      hls = new Hls();
+      hls.loadSource(source.url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        void video.play().catch(() => setPreviewError("A reprodução do trailer foi bloqueada pelo navegador."));
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) fallbackToYouTube();
+      });
+    }).catch((error: unknown) => {
+      if (!cancelled) setPreviewError(`Não foi possível iniciar o player: ${String(error)}`);
+    });
+    return () => {
+      cancelled = true;
+      fallbackController.abort();
+      if (fallbackRef.current === fallbackToYouTube) fallbackRef.current = () => {};
+      hls?.destroy();
+    };
+  }, [active, game.title, source]);
+
+  return {
+    warmupRef: setWarmupRef,
+    videoRef,
+    source,
+    previewLoading,
+    previewPlaying,
+    previewLoaded,
+    previewError,
+    onPlaying: () => {
+      setPreviewError("");
+      setPreviewPlaying(true);
+    },
+    onLoaded: () => setPreviewLoaded(true),
+    onPause: () => setPreviewPlaying(false),
+    onVideoError: () => {
+      if (!active) return;
+      if (source?.type === "youtube") setPreviewError("O YouTube não conseguiu carregar esta prévia.");
+      else fallbackRef.current();
+    },
+    previewLabel: previewPlaying
+      ? "PRÉVIA DO JOGO"
+      : previewLoading || previewError?.includes("tentando YouTube") ? "BUSCANDO PRÉVIA..."
+      : previewError || !source ? "PRÉVIA INDISPONÍVEL"
+      : !previewLoaded ? "INICIANDO PRÉVIA..." : "PRÉVIA CARREGADA",
+  };
+}
+
+function PreviewPlayer({ preview, title }: { preview: ReturnType<typeof useGamePreview>; title: string }) {
+  if (!preview.source) return null;
+  if (preview.source.type === "youtube") {
+    return <iframe className="game-preview-frame" src={preview.source.url} title={`Prévia de ${title}`} allow="autoplay; encrypted-media; picture-in-picture" referrerPolicy="strict-origin-when-cross-origin" onLoad={preview.onLoaded} onError={preview.onVideoError} />;
+  }
+  return <video ref={preview.videoRef} className="game-preview-video" autoPlay muted loop playsInline onPlaying={preview.onPlaying} onPause={preview.onPause} onError={preview.onVideoError} />;
 }
 
 function SectionHeader({ eyebrow, title, link }: { eyebrow?: string; title: string; link?: string }) {
@@ -134,33 +343,142 @@ function Header({
   page,
   go,
   onLogin,
+  cartCount,
+  accountEmail,
+  onLogout,
   query,
   onSearch,
+  games,
+  usdBrl,
 }: {
   page: Page;
   go: (page: Page) => void;
   onLogin: () => void;
+  cartCount: number;
+  accountEmail: string;
+  onLogout: () => void;
   query: string;
   onSearch: (query: string) => void;
+  games: PromoGame[];
+  usdBrl: number | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [searchText, setSearchText] = useState(query);
+  const [suggestions, setSuggestions] = useState<PromoGame[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState("");
+  useEffect(() => setSearchText(query), [query]);
+  useEffect(() => {
+    const term = searchText.trim();
+    if (term.length < 2) {
+      setSuggestions([]);
+      setSuggestionsLoading(false);
+      setSuggestionsError("");
+      return;
+    }
+
+    const activeMatches = games.filter((game) => game.title.toLocaleLowerCase("pt-BR").includes(term.toLocaleLowerCase("pt-BR")));
+    if (usdBrl === null) {
+      setSuggestions(activeMatches.slice(0, 6));
+      setSuggestionsLoading(false);
+      setSuggestionsError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    setSuggestions(activeMatches.slice(0, 6));
+    setSuggestionsLoading(true);
+    setSuggestionsError("");
+    const timeout = window.setTimeout(async () => {
+      try {
+        const catalogMatches = await searchGameCatalog(term, controller.signal, usdBrl, 6);
+        if (controller.signal.aborted) return;
+        const activeByTitle = new Map(activeMatches.map((game) => [game.title.toLocaleLowerCase("pt-BR"), game]));
+        const merged = catalogMatches.map((game) => activeByTitle.get(game.title.toLocaleLowerCase("pt-BR")) ?? game);
+        for (const game of activeMatches) {
+          if (!merged.some((match) => match.title.toLocaleLowerCase("pt-BR") === game.title.toLocaleLowerCase("pt-BR"))) merged.push(game);
+        }
+        setSuggestions(merged.slice(0, 6));
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setSuggestions(activeMatches.slice(0, 6));
+          setSuggestionsError(`Não foi possível consultar as sugestões: ${String(error)}`);
+        }
+      } finally {
+        if (!controller.signal.aborted) setSuggestionsLoading(false);
+      }
+    }, 450);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [games, searchText, usdBrl]);
+
+  const submitSearch = (term: string) => {
+    const normalizedTerm = term.trim();
+    if (!normalizedTerm) return;
+    setSearchText(normalizedTerm);
+    setSuggestionsOpen(false);
+    setOpen(false);
+    onSearch(normalizedTerm);
+  };
+
+  const searchBox = (className = "") => (
+    <div className={`game-search ${className}`}>
+      <label className="search">
+        <Icon name="search" />
+        <input
+          aria-label="Buscar jogos"
+          aria-autocomplete="list"
+          aria-expanded={suggestionsOpen && suggestions.length > 0}
+          value={searchText}
+          onChange={(event) => { setSearchText(event.target.value); setSuggestionsOpen(true); }}
+          onFocus={() => setSuggestionsOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setSuggestionsOpen(false);
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submitSearch(searchText);
+            }
+          }}
+          placeholder="Buscar jogos..."
+        />
+      </label>
+      {suggestionsOpen && searchText.trim().length >= 2 && (suggestions.length > 0 || suggestionsLoading || suggestionsError) && (
+        <div className="game-search-suggestions" role="listbox" aria-label="Sugestões de jogos">
+          {suggestionsLoading && !suggestions.length && <span className="game-search-hint">Buscando jogos...</span>}
+          {suggestions.map((game) => (
+            <button type="button" role="option" aria-selected="false" key={game.id} onMouseDown={(event) => event.preventDefault()} onClick={() => submitSearch(game.title)}>
+              <img src={game.image} alt="" />
+              <span className="suggestion-game"><strong>{game.title}</strong><small>{game.onSale ? `Em promoção · ${game.price}` : game.price === "Preço indisponível" ? "Sem promoção ativa · preço indisponível" : `Sem promoção · preço normal ${game.price}`}</small></span>
+              {game.onSale && <span className="suggestion-discount">{game.discount}</span>}
+            </button>
+          ))}
+          {suggestionsError && <span className="game-search-hint">{suggestionsError}</span>}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <header className="header">
       <div className="header-inner">
         <button className="logo" onClick={() => go("home")} aria-label="GamePing início">
           <span className="logo-mark">G</span><span>GAME<span>PING</span></span>
         </button>
-        <label className="search"><Icon name="search" /><input aria-label="Buscar jogos e lojas" value={query} onChange={(event) => onSearch(event.target.value)} placeholder="Buscar jogos, lojas e ofertas..." /></label>
+        {searchBox()}
         <nav className={open ? "nav nav-open" : "nav"}>
-          <label className="search mobile-search"><Icon name="search" /><input aria-label="Buscar jogos e lojas" value={query} onChange={(event) => onSearch(event.target.value)} placeholder="Buscar jogos, lojas e ofertas..." /></label>
+          {searchBox("mobile-search")}
           <button className={page === "home" ? "active" : ""} onClick={() => { go("home"); setOpen(false); }}>Promoções</button>
           <button className={page === "free" ? "active" : ""} onClick={() => { go("free"); setOpen(false); }}>Grátis</button>
-          <button className={page === "new" ? "active" : ""} onClick={() => { go("new"); setOpen(false); }}>Lançamentos</button>
+          <button className={page === "new" ? "active" : ""} onClick={() => { go("new"); setOpen(false); }}>Destaques</button>
           <button className={page === "wishlist" ? "active" : ""} onClick={() => { go("wishlist"); setOpen(false); }}>Minha lista</button>
+          <button className={page === "cart" ? "active" : ""} onClick={() => { go("cart"); setOpen(false); }}>Carrinho ({cartCount})</button>
         </nav>
         <div className="header-actions">
           <Button onClick={() => go("alerts")}><Icon name="bell" />Ativar alertas</Button>
-          <button className="avatar" onClick={onLogin} aria-label="Abrir login"><Icon name="user" /></button>
+          {accountEmail ? <button className="account-chip" onClick={onLogout} title="Sair da conta de demonstração"><Icon name="user" />{accountEmail.split("@")[0]} · Sair</button> : <button className="avatar" onClick={onLogin} aria-label="Abrir login"><Icon name="user" /></button>}
           <button className="menu-button" onClick={() => setOpen(!open)} aria-label="Menu"><Icon name={open ? "x" : "menu"} /></button>
         </div>
       </div>
@@ -174,92 +492,211 @@ function GameCard({
   historic = false,
   favorite,
   onFavorite,
+  inCart = false,
+  onCart,
   removable = false,
 }: {
-  game: typeof games[0];
+  game: PromoGame;
   onClick: () => void;
   historic?: boolean;
   favorite: boolean;
   onFavorite: () => void;
+  inCart?: boolean;
+  onCart?: () => void;
   removable?: boolean;
 }) {
+  const [previewActive, setPreviewActive] = useState(false);
+  const preview = useGamePreview(game, previewActive);
   return (
-    <button className="game-card" onClick={onClick}>
-      <div className="game-art"><img src={game.image} alt="" /><Discount>{game.discount}</Discount><span className={favorite ? "heart favorited" : "heart"} role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onFavorite(); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onFavorite(); } }} aria-label={favorite ? "Remover dos favoritos" : "Favoritar"}><Icon name="heart" /></span></div>
-      <div className="game-info">
-        <StoreTag>{game.store}</StoreTag>
-        <h3>{game.title}</h3>
-        <div className="price-row"><span className="old-price">{game.old}</span><strong>{game.price}</strong></div>
-        {historic && <Discount historic>Menor preço histórico</Discount>}
-        {removable && <span className="remove-favorite" onClick={(event) => { event.stopPropagation(); onFavorite(); }}>Remover</span>}
+    <article ref={preview.warmupRef} className="game-card" onMouseEnter={() => setPreviewActive(true)} onMouseLeave={() => setPreviewActive(false)} onFocus={() => setPreviewActive(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPreviewActive(false); }}>
+      <button className="game-card-open" onClick={onClick}>
+        <div className="game-art"><GameArtwork src={game.image} steamAppId={game.steamAppId} />{previewActive && <PreviewPlayer preview={preview} title={game.title} />}{previewActive && <span className="preview-label">{preview.previewLabel}</span>}{game.onSale ? <Discount>{game.discount}</Discount> : <span className="watch-pill">{game.price === "Preço indisponível" ? "PREÇO INDISPONÍVEL" : "SEM PROMOÇÃO"}</span>}</div>
+        <div className="game-info"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><div className="price-row">{game.onSale && <span className="old-price">{game.old}</span>}<strong>{game.price}</strong></div>{!game.onSale && game.price !== "Preço indisponível" && <span className="price-status">Preço normal</span>}{historic && <Discount historic>Menor preço histórico</Discount>}</div>
+      </button>
+      <button className={favorite ? "heart favorited" : "heart"} onClick={onFavorite} aria-label={favorite ? "Remover dos favoritos" : "Salvar e avisar quando entrar em promoção"}><Icon name="heart" /></button>
+      {onCart && <button className={inCart ? "cart-action in-cart" : "cart-action"} onClick={onCart} aria-label={inCart ? "Remover do carrinho" : "Adicionar ao carrinho"}><Icon name="cart" size={15} />{inCart ? "No carrinho" : "Adicionar ao carrinho"}</button>}
+      {removable && <button className="remove-favorite" onClick={onFavorite}>Remover</button>}
+    </article>
+  );
+}
+
+function LiveOfferCard({ game, onVisit }: { game: PromoGame; onVisit: () => void }) {
+  const [previewActive, setPreviewActive] = useState(false);
+  const preview = useGamePreview(game, previewActive);
+  return (
+    <button ref={preview.warmupRef} className="live-card" onClick={onVisit} onMouseEnter={() => setPreviewActive(true)} onMouseLeave={() => setPreviewActive(false)} onFocus={() => setPreviewActive(true)} onBlur={() => setPreviewActive(false)}>
+      <div className="live-cover">
+        <GameArtwork src={game.image} steamAppId={game.steamAppId} />
+        {previewActive && <PreviewPlayer preview={preview} title={game.title} />}
+        {previewActive && <span className="preview-label">{preview.previewLabel}</span>}
+        <span className="live-tag"><i />AGORA</span>
       </div>
+      <div className="live-card-info"><StoreTag>{game.store}</StoreTag><strong>{game.title}</strong><div><span>{game.price}</span><Discount>{game.discount}</Discount></div></div>
     </button>
   );
 }
 
-function Home({ go, favorites, toggleFavorite }: { go: (page: Page) => void; favorites: string[]; toggleFavorite: (title: string) => void }) {
+function FreeGameCard({ game, onBuy }: { game: FreeGame; onBuy: () => void }) {
+  const [previewActive, setPreviewActive] = useState(false);
+  const preview = useGamePreview(game, previewActive);
+  return (
+    <button ref={preview.warmupRef} className="free-card" onClick={onBuy} onMouseEnter={() => setPreviewActive(true)} onMouseLeave={() => setPreviewActive(false)} onFocus={() => setPreviewActive(true)} onBlur={() => setPreviewActive(false)}>
+      <GameArtwork src={game.image} />
+      {previewActive && <PreviewPlayer preview={preview} title={game.title} />}
+      {previewActive && <span className="preview-label">{preview.previewLabel}</span>}
+      <div className="free-overlay" />
+      <div className="free-info"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><span className="free-pill">GRÁTIS AGORA</span><p>{game.until}</p></div>
+    </button>
+  );
+}
+
+function CatalogControls({ category, onCategoryChange, sortOrder, onSortChange }: { category: GameCategory | "Todos"; onCategoryChange: (category: GameCategory | "Todos") => void; sortOrder: SortOrder; onSortChange: (sort: SortOrder) => void }) {
+  return (
+    <div className="catalog-controls">
+      <div className="category-filters" aria-label="Categorias de jogos">
+        {(["Todos", ...gameCategories] as const).map((item) => <button className={category === item ? "active" : ""} key={item} onClick={() => onCategoryChange(item)}>{item}</button>)}
+      </div>
+      <label className="sort-control">Ordenar por
+        <select value={sortOrder} onChange={(event) => onSortChange(event.target.value as SortOrder)} aria-label="Ordenar promoções">
+          <option value="popular">Mais populares</option>
+          <option value="price-asc">Menor preço</option>
+          <option value="price-desc">Maior preço</option>
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function Home({
+  go,
+  favorites,
+  games,
+  freeGames,
+  loading,
+  error,
+  lastUpdated,
+  onRefresh,
+  recommendations,
+  onVisit,
+  onBuy,
+  onFavorite,
+  cartIds,
+  toggleCart,
+  usdBrl,
+  usdBrlUpdatedAt,
+  usdBrlStale,
+  personalized,
+  onCategoryChange,
+  onSortChange,
+  category,
+  sortOrder,
+}: {
+  go: (page: Page) => void;
+  favorites: string[];
+  games: PromoGame[];
+  freeGames: FreeGame[];
+  loading: boolean;
+  error: string;
+  lastUpdated: Date | null;
+  onRefresh: () => void;
+  recommendations: PromoGame[];
+  onVisit: (game: PromoGame) => void;
+  onBuy: (url: string) => void;
+  onFavorite: (title: string) => void;
+  cartIds: string[];
+  toggleCart: (game: PromoGame) => void;
+  usdBrl: number | null;
+  usdBrlUpdatedAt: number | null;
+  usdBrlStale: boolean;
+  personalized: boolean;
+  category: GameCategory | "Todos";
+  sortOrder: SortOrder;
+  onCategoryChange: (category: GameCategory | "Todos") => void;
+  onSortChange: (sort: SortOrder) => void;
+}) {
   const [slide, setSlide] = useState(0);
-  const [remaining, setRemaining] = useState(8 * 60 * 60 + 42 * 60 + 16);
+  const [heroPreviewGameId, setHeroPreviewGameId] = useState<string | null>(null);
+  const visibleGames = games.filter((game) => category === "Todos" || game.category === category);
+  if (sortOrder !== "popular") {
+    visibleGames.sort((a, b) => sortOrder === "price-asc" ? a.priceValue - b.priceValue : b.priceValue - a.priceValue);
+  }
+  const visibleRecommendations = recommendations.filter((game) => category === "Todos" || game.category === category);
+  if (sortOrder === "price-asc") visibleRecommendations.sort((a, b) => a.priceValue - b.priceValue);
+  if (sortOrder === "price-desc") visibleRecommendations.sort((a, b) => b.priceValue - a.priceValue);
+  const current = visibleGames.length ? visibleGames[slide % visibleGames.length] : null;
+  const heroPreviewReady = Boolean(current && heroPreviewGameId === current.id);
+  const heroPreview = useGamePreview(current ?? { title: "" }, heroPreviewReady, heroPreviewReady);
+
   useEffect(() => {
-    const timer = window.setInterval(() => setRemaining((value) => value > 0 ? value - 1 : 0), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const countdown = [Math.floor(remaining / 3600), Math.floor((remaining % 3600) / 60), remaining % 60].map((value) => String(value).padStart(2, "0")).join(":");
-  const slides = [
-    { title: "NEON REQUIEM", copy: "A cidade nunca dorme. Seu preço acaba em breve.", image: images.rider, discount: "-75%", price: "R$ 62,47" },
-    { title: "THE LAST SIGNAL", copy: "Decifre o desconhecido antes que o sinal desapareça.", image: images.digital, discount: "-60%", price: "R$ 79,90" },
-  ];
-  const current = slides[slide];
+    setHeroPreviewGameId(null);
+    if (!current) return;
+    const gameId = current.id;
+    const timeout = window.setTimeout(() => setHeroPreviewGameId(gameId), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [current?.id]);
+
+  const showHeroPreview = heroPreviewReady && (heroPreview.previewPlaying || (heroPreview.source?.type === "youtube" && heroPreview.previewLoaded));
+
   return (
     <>
       <main>
-        <section className="hero">
-          <img className="hero-image" src={current.image} alt="" />
+        <section className={showHeroPreview ? "hero hero-preview-visible" : "hero"}>
+          {current
+            ? <GameArtwork className="hero-image" src={current.image} steamAppId={current.steamAppId} hero />
+            : <img className="hero-image" src={images.rider} alt="" />}
           <div className="hero-shade" />
+          {heroPreviewReady && heroPreview.source && <div className="hero-preview-layer"><PreviewPlayer preview={heroPreview} title={current?.title ?? ""} /></div>}
           <div className="hero-content container">
             <div className="hero-copy">
-              <div className="hero-kicker"><span>Oferta em destaque</span><span className="countdown">TERMINA EM <strong>{countdown}</strong></span></div>
-              <h1>{current.title}</h1>
-              <p>{current.copy}</p>
-              <div className="hero-price"><Discount>{current.discount}</Discount><span><small>R$ 249,90</small><strong>{current.price}</strong></span></div>
-              <div className="hero-buttons"><Button onClick={() => go("game")}>Ver oferta <Icon name="arrow" /></Button><Button variant="secondary"><Icon name="heart" />Adicionar à lista</Button></div>
+              <div className="hero-kicker"><span>Oferta em destaque</span>{current && <span className="countdown">DESCONTO ATIVO <strong>{current.store}</strong></span>}</div>
+              <h1>{current?.title ?? (loading ? "Buscando ofertas..." : "Nenhuma oferta ativa")}</h1>
+              <p>{current ? `Oferta ativa na ${current.store}. Os preços são consultados novamente a cada 5 minutos.` : "As promoções atuais das lojas aparecerão aqui assim que forem carregadas."}</p>
+              {current && <div className="hero-price"><Discount>{current.discount}</Discount><span><small>{current.old}</small><strong>{current.price}</strong></span></div>}
+              {current && <div className="hero-buttons"><Button onClick={() => onVisit(current)}>Ver oferta <Icon name="arrow" /></Button><Button variant="secondary" onClick={() => onFavorite(current.title)}><Icon name="heart" />{favorites.includes(current.title) ? "Remover da lista" : "Adicionar à lista"}</Button></div>}
             </div>
-            <div className="carousel-controls">
-              <button onClick={() => setSlide((slide + slides.length - 1) % slides.length)} aria-label="Anterior"><Icon name="chevron" /></button>
-              <span>{slide + 1} / {slides.length}</span>
-              <button onClick={() => setSlide((slide + 1) % slides.length)} aria-label="Próximo"><Icon name="chevron" /></button>
-            </div>
+            {visibleGames.length > 1 && <div className="carousel-controls">
+              <button onClick={() => setSlide((index) => (index + visibleGames.length - 1) % visibleGames.length)} aria-label="Anterior"><Icon name="chevron" /></button>
+              <span>{slide % visibleGames.length + 1} / {visibleGames.length}</span>
+              <button onClick={() => setSlide((index) => (index + 1) % visibleGames.length)} aria-label="Próximo"><Icon name="chevron" /></button>
+            </div>}
           </div>
         </section>
 
         <div className="container content">
           <section className="live-section">
-            <SectionHeader eyebrow="ATUALIZADO EM TEMPO REAL" title="Alertas ao vivo" link="Ver todos" />
-            <div className="live-grid">
-              {games.slice(0, 4).map((game, index) => (
-                <button className="live-card" key={game.title} onClick={() => go("game")}>
-                  <div className="live-cover"><img src={game.image} alt="" /><span className="live-tag"><i />AGORA</span></div>
-                  <div className="live-card-info"><StoreTag>{game.store}</StoreTag><strong>{game.title}</strong><div><span>{game.price}</span><Discount>{game.discount}</Discount></div><small>há {index + 1} min</small></div>
-                </button>
-              ))}
+            <SectionHeader eyebrow="ATUALIZADO AUTOMATICAMENTE" title="Ofertas ativas" />
+            <div className="sync-status">
+              <span>{error || (loading ? "Carregando promoções..." : `Atualização a cada 5 minutos · Conversão estimada de US$ 1 = R$ ${usdBrl?.toFixed(2).replace(".", ",") ?? "—"}${usdBrlUpdatedAt ? ` · Câmbio de ${new Date(usdBrlUpdatedAt).toLocaleDateString("pt-BR")}${usdBrlStale ? " (em cache)" : ""}` : ""}${lastUpdated ? ` · Ofertas consultadas às ${lastUpdated.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : ""}`)}</span>
+              <button className="text-link" onClick={onRefresh}>Atualizar agora</button>
             </div>
+            {error && games.length > 0 && <p className="sync-warning">{error} As ofertas já carregadas continuam disponíveis.</p>}
+            <CatalogControls category={category} onCategoryChange={onCategoryChange} sortOrder={sortOrder} onSortChange={onSortChange} />
+            <div className="live-grid">
+              {visibleGames.slice(0, 4).map((game) => <LiveOfferCard key={game.id} game={game} onVisit={() => onVisit(game)} />)}
+            </div>
+            {!visibleGames.length && !loading && !error && <p className="sync-warning">Nenhuma oferta ativa nesta categoria.</p>}
           </section>
 
           <section>
             <SectionHeader eyebrow="POR TEMPO LIMITADO" title="Jogos grátis" link="Ver todos" />
             <div className="free-grid">
-              {freeGames.map((game) => <button className="free-card" key={game.title} onClick={() => go("game")}><img src={game.image} alt="" /><div className="free-overlay" /><div className="free-info"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><span className="free-pill">GRÁTIS AGORA</span><p>{game.until}</p></div></button>)}
+              {freeGames.map((game) => <FreeGameCard key={game.id} game={game} onBuy={() => onBuy(game.url)} />)}
             </div>
+            {!freeGames.length && !loading && <p className="sync-warning">Nenhum jogo grátis ativo encontrado.</p>}
           </section>
 
           <section>
-            <SectionHeader eyebrow="AS MELHORES OFERTAS" title="Maiores descontos" link="Explorar ofertas" />
-            <div className="game-grid">{games.slice(0, 4).map((game) => <GameCard key={game.title} game={game} onClick={() => go("game")} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div>
+            <SectionHeader eyebrow="POPULARIDADE PELO VOLUME DE AVALIAÇÕES" title="Jogos mais populares" link="Explorar ofertas" />
+            <div className="game-grid">{visibleGames.slice(0, 4).map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite={favorites.includes(game.title)} onFavorite={() => onFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} />)}</div>
           </section>
 
           <section>
-            <SectionHeader eyebrow="VALE A PENA" title="Menor preço histórico" link="Ver todos" />
-            <div className="game-grid">{games.slice(2, 6).map((game) => <GameCard key={game.title} game={game} onClick={() => go("game")} historic favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div>
+            <SectionHeader eyebrow="MAIS OPORTUNIDADES" title="Outras ofertas ativas" />
+            <div className="game-grid">{visibleGames.slice(4, 8).map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite={favorites.includes(game.title)} onFavorite={() => onFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} />)}</div>
+          </section>
+          <section>
+            <SectionHeader eyebrow={personalized ? "BASEADO NOS SEUS ACESSOS E POPULARIDADE" : "POPULARIDADE PELO VOLUME DE AVALIAÇÕES"} title="Recomendados para você" />
+            {visibleRecommendations.length ? <div className="game-grid">{visibleRecommendations.slice(0, 4).map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite={favorites.includes(game.title)} onFavorite={() => onFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} />)}</div> : <p className="sync-warning">Ainda não há jogos suficientes para recomendar nesta categoria.</p>}
           </section>
         </div>
       </main>
@@ -268,39 +705,84 @@ function Home({ go, favorites, toggleFavorite }: { go: (page: Page) => void; fav
   );
 }
 
-function SearchResults({ query, go, favorites, toggleFavorite }: { query: string; go: (page: Page) => void; favorites: string[]; toggleFavorite: (title: string) => void }) {
+function SearchResults({ query, go, favorites, toggleFavorite, games, loading, error, onVisit, cartIds, toggleCart, usdBrl, category, onCategoryChange, sortOrder, onSortChange }: { query: string; go: (page: Page) => void; favorites: string[]; toggleFavorite: (title: string) => void; games: PromoGame[]; loading: boolean; error: string; onVisit: (game: PromoGame) => void; cartIds: string[]; toggleCart: (game: PromoGame) => void; usdBrl: number | null; category: GameCategory | "Todos"; onCategoryChange: (category: GameCategory | "Todos") => void; sortOrder: SortOrder; onSortChange: (sort: SortOrder) => void }) {
+  const [catalogGames, setCatalogGames] = useState<PromoGame[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
   const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
-  const results = games.filter((game) => `${game.title} ${game.store}`.toLocaleLowerCase("pt-BR").includes(normalizedQuery));
+  useEffect(() => {
+    if (query.trim().length < 2 || usdBrl === null) {
+      setCatalogGames([]);
+      setCatalogLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setCatalogLoading(true);
+      setCatalogError("");
+      try {
+        setCatalogGames(await searchGameCatalog(query.trim(), controller.signal, usdBrl));
+      } catch (reason) {
+        if (!controller.signal.aborted) setCatalogError(`Não foi possível buscar no catálogo. ${String(reason)}`);
+      } finally {
+        if (!controller.signal.aborted) setCatalogLoading(false);
+      }
+    }, 350);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [query, usdBrl]);
+  const activeResults = games.filter((game) => `${game.title} ${game.store}`.toLocaleLowerCase("pt-BR").includes(normalizedQuery));
+  const activeNames = new Set(activeResults.map((game) => game.title.toLocaleLowerCase("pt-BR")));
+  const results = [...activeResults, ...catalogGames.filter((game) => !activeNames.has(game.title.toLocaleLowerCase("pt-BR")))]
+    .filter((game) => category === "Todos" || game.category === category);
+  const activeGameCount = new Set(activeResults.map((game) => game.title.toLocaleLowerCase("pt-BR"))).size;
+  if (sortOrder === "price-asc") results.sort((a, b) => Number(b.onSale) - Number(a.onSale) || (a.onSale ? a.priceValue - b.priceValue : a.title.localeCompare(b.title)));
+  if (sortOrder === "price-desc") results.sort((a, b) => Number(b.onSale) - Number(a.onSale) || (a.onSale ? b.priceValue - a.priceValue : a.title.localeCompare(b.title)));
+  if (sortOrder === "popular") results.sort((a, b) => b.popularity - a.popularity);
   return (
     <main className="catalog-page">
       <div className="container">
-        <div className="page-title"><span className="eyebrow">BUSCA</span><h1>Resultados para “{query.trim()}”</h1><p>{results.length} {results.length === 1 ? "jogo encontrado" : "jogos encontrados"} no catálogo demonstrativo.</p></div>
-        {results.length ? <div className="game-grid">{results.map((game) => <GameCard key={game.title} game={game} onClick={() => go("game")} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div> : <div className="empty-list"><h2>Nenhum jogo encontrado</h2><p>Tente buscar pelo nome do jogo ou pela loja.</p><Button onClick={() => go("home")}>Voltar às promoções</Button></div>}
+        <div className="page-title"><span className="eyebrow">BUSCA</span><h1>Resultados para “{query.trim()}”</h1><p>{loading || catalogLoading
+          ? "Consultando promoções ativas e catálogo de jogos..."
+          : error && activeGameCount === 0
+            ? "Não foi possível confirmar se há uma promoção ativa neste momento."
+            : activeGameCount > 0
+              ? `Encontramos promoções ativas para ${activeGameCount} jogo${activeGameCount === 1 ? "" : "s"}.`
+              : results.length > 0
+                ? "Nenhuma promoção ativa encontrada agora. Os jogos abaixo estão no catálogo e podem ser acompanhados."
+                : "Busque pelo nome de um jogo para verificar se está em promoção."}</p></div>
+        <CatalogControls category={category} onCategoryChange={onCategoryChange} sortOrder={sortOrder} onSortChange={onSortChange} />
+        {results.length ? <div className="game-grid">{results.map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} />)}</div> : <div className="empty-list"><h2>{loading || catalogLoading ? "Buscando jogos..." : catalogError ? "Não foi possível buscar os jogos" : error ? "Não foi possível carregar as ofertas" : "Nenhum jogo encontrado"}</h2><p>{catalogError || error || "Tente buscar por outro nome."}</p><Button onClick={() => go("home")}>Voltar às promoções</Button></div>}
+        {catalogError && results.length > 0 && <p className="sync-warning">{catalogError}</p>}
       </div>
       <Footer />
     </main>
   );
 }
 
-function FreeGamesPage({ go }: { go: (page: Page) => void }) {
+function FreeGamesPage({ freeGames, loading, error, onBuy }: { freeGames: FreeGame[]; loading: boolean; error: string; onBuy: (url: string) => void }) {
   return (
     <main className="catalog-page">
       <div className="container">
-        <div className="page-title"><span className="eyebrow">POR TEMPO LIMITADO</span><h1>Jogos grátis</h1><p>Ofertas gratuitas do catálogo demonstrativo.</p></div>
-        <div className="free-grid">{freeGames.map((game) => <button className="free-card" key={game.title} onClick={() => go("game")}><img src={game.image} alt="" /><div className="free-overlay" /><div className="free-info"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><span className="free-pill">GRÁTIS AGORA</span><p>{game.until}</p></div></button>)}</div>
+        <div className="page-title"><span className="eyebrow">POR TEMPO LIMITADO</span><h1>Jogos grátis</h1><p>Ofertas gratuitas que ainda estão ativas.</p></div>
+        <div className="free-grid">{freeGames.map((game) => <FreeGameCard key={game.id} game={game} onBuy={() => onBuy(game.url)} />)}</div>
+        {!freeGames.length && <div className="empty-list"><h2>{loading ? "Carregando jogos grátis..." : error ? "Não foi possível carregar os jogos grátis" : "Nenhum jogo grátis ativo"}</h2><p>{error || "As ofertas gratuitas disponíveis aparecerão aqui."}</p></div>}
       </div>
       <Footer />
     </main>
   );
 }
 
-function NewReleasesPage({ go, favorites, toggleFavorite }: { go: (page: Page) => void; favorites: string[]; toggleFavorite: (title: string) => void }) {
-  const releases = games.slice(3, 6);
+function NewReleasesPage({ favorites, toggleFavorite, games, loading, error, onVisit, cartIds, toggleCart }: { favorites: string[]; toggleFavorite: (title: string) => void; games: PromoGame[]; loading: boolean; error: string; onVisit: (game: PromoGame) => void; cartIds: string[]; toggleCart: (game: PromoGame) => void }) {
+  const releases = games.slice(0, 6);
   return (
     <main className="catalog-page">
       <div className="container">
-        <div className="page-title"><span className="eyebrow">EXPLORE O CATÁLOGO</span><h1>Lançamentos</h1><p>Jogos em destaque no catálogo demonstrativo.</p></div>
-        <div className="game-grid">{releases.map((game) => <GameCard key={game.title} game={game} onClick={() => go("game")} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div>
+        <div className="page-title"><span className="eyebrow">OFERTAS ATUALIZADAS</span><h1>Destaques das lojas</h1><p>Ofertas ordenadas pela popularidade aproximada do jogo, usando avaliações públicas.</p></div>
+        <div className="game-grid">{releases.map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} />)}</div>
+        {!releases.length && <div className="empty-list"><h2>{loading ? "Carregando promoções..." : error ? "Não foi possível carregar as ofertas" : "Nenhuma promoção ativa"}</h2><p>{error || "As ofertas disponíveis aparecerão aqui."}</p></div>}
       </div>
       <Footer />
     </main>
@@ -338,7 +820,7 @@ function PriceChart() {
   );
 }
 
-function GamePage({ onAlert, favorites, toggleFavorite }: { onAlert: () => void; favorites: string[]; toggleFavorite: (title: string) => void }) {
+function GamePage({ onAlert, favorites, toggleFavorite, games }: { onAlert: () => void; favorites: string[]; toggleFavorite: (title: string) => void; games: PromoGame[] }) {
   const favorite = favorites.includes("NEON REQUIEM");
   const stores = [
     ["Steam", "R$ 62,47", "-75%", "Melhor preço"],
@@ -389,20 +871,21 @@ function GamePage({ onAlert, favorites, toggleFavorite }: { onAlert: () => void;
           </section>
         </div>
 
-        <section><SectionHeader title="Jogos semelhantes" link="Ver todos" /><div className="game-grid">{games.slice(1, 5).map((game) => <GameCard key={game.title} game={game} onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div></section>
+        <section><SectionHeader title="Jogos semelhantes" link="Ver todos" /><div className="game-grid">{games.slice(1, 5).map((game) => <GameCard key={game.id} game={game} onClick={() => openOffer(game.url)} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} />)}</div></section>
       </div>
     </main>
   );
 }
 
-function WishlistPage({ favorites, toggleFavorite, go }: { favorites: string[]; toggleFavorite: (title: string) => void; go: (page: Page) => void }) {
+function WishlistPage({ favorites, toggleFavorite, go, games, onVisit, cartIds, toggleCart }: { favorites: string[]; toggleFavorite: (title: string) => void; go: (page: Page) => void; games: PromoGame[]; onVisit: (game: PromoGame) => void; cartIds: string[]; toggleCart: (game: PromoGame) => void }) {
   const favoriteGames = games.filter((game) => favorites.includes(game.title));
+  const waitingGames = favorites.filter((title) => !favoriteGames.some((game) => game.title === title));
   return (
     <main className="wishlist-page">
       <div className="container">
         <div className="page-title"><span className="title-icon wishlist-title-icon"><Icon name="heart" /></span><div><span className="eyebrow">SEUS JOGOS FAVORITOS</span><h1>Minha Lista</h1><p>Acompanhe os preços dos jogos que você quer jogar.</p></div></div>
-        {favoriteGames.length ? (
-          <><div className="list-summary"><span>{favoriteGames.length} {favoriteGames.length === 1 ? "jogo salvo" : "jogos salvos"}</span><span>Os preços são atualizados automaticamente</span></div><div className="game-grid wishlist-grid">{favoriteGames.map((game) => <GameCard key={game.title} game={game} onClick={() => go("game")} favorite onFavorite={() => toggleFavorite(game.title)} removable />)}</div></>
+        {favorites.length ? (
+          <><div className="list-summary"><span>{favorites.length} {favorites.length === 1 ? "jogo salvo" : "jogos salvos"}</span><span>Você receberá um aviso quando um jogo salvo entrar em promoção.</span></div><div className="game-grid wishlist-grid">{favoriteGames.map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite onFavorite={() => toggleFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} removable />)}</div>{waitingGames.length > 0 && <div className="watching-list"><h2>Aguardando promoção</h2>{waitingGames.map((title) => <div key={title}><span><Icon name="bell" />{title}</span><span>Você será avisado quando aparecer uma oferta ativa.</span><button onClick={() => toggleFavorite(title)}>Remover</button></div>)}</div>}</>
         ) : (
           <div className="empty-list"><span><Icon name="heart" size={32} /></span><h2>Sua lista está vazia</h2><p>Favorite jogos para acompanhar preços e descontos em um só lugar.</p><Button onClick={() => go("home")}>Explorar promoções <Icon name="arrow" /></Button></div>
         )}
@@ -411,17 +894,31 @@ function WishlistPage({ favorites, toggleFavorite, go }: { favorites: string[]; 
   );
 }
 
-function Toggle({ active, setActive }: { active: boolean; setActive: (value: boolean) => void }) {
-  return <button className={active ? "toggle active" : "toggle"} onClick={() => setActive(!active)} aria-label="Alternar"><span /></button>;
+function CartPage({ cart, games, removeFromCart, onBuy }: { cart: SavedCartItem[]; games: PromoGame[]; removeFromCart: (gameId: string) => void; onBuy: (url: string) => void }) {
+  const activeItems = cart.map((item) => ({ saved: item, game: games.find((game) => game.gameId === item.gameId) }));
+  const total = activeItems.reduce((sum, item) => sum + (item.game?.priceValue ?? 0), 0);
+  const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+  return (
+    <main className="catalog-page">
+      <div className="container">
+        <div className="page-title"><span className="title-icon"><Icon name="cart" /></span><div><span className="eyebrow">SUA PRÓXIMA COMPRA</span><h1>Carrinho</h1><p>Os preços são estimativas em reais e podem mudar na loja.</p></div></div>
+        {cart.length ? <div className="cart-layout"><section className="cart-items">{activeItems.map(({ saved, game }) => <article className={`cart-item ${(game?.appUrl ?? saved.appUrl) ? "has-app-link" : ""}`} key={saved.gameId}><img src={game?.image ?? saved.image} alt="" /><div><h2>{saved.title}</h2><p>{game ? `${game.store} · ${game.price}` : `Sem oferta ativa · ${saved.price}`}</p></div><button className="cart-store-link" onClick={() => onBuy(game?.url ?? saved.url)}>{game?.store === "Steam" || saved.store === "Steam" ? "Ver na Steam" : "Ir para loja"} <Icon name="arrow" /></button>{(game?.appUrl ?? saved.appUrl) && <button className="steam-app-link" onClick={() => onBuy(game?.appUrl ?? saved.appUrl ?? saved.url)}>Abrir no aplicativo Steam</button>}<button aria-label={`Remover ${saved.title} do carrinho`} onClick={() => removeFromCart(saved.gameId)}><Icon name="trash" /></button></article>)}</section><aside className="cart-summary"><h2>Resumo</h2><p><span>Jogos com oferta ativa</span><strong>{activeItems.filter((item) => item.game).length}</strong></p><p><span>Total estimado</span><strong>{brl.format(total)}</strong></p><small>O valor final e a disponibilidade são confirmados na loja.</small></aside></div> : <div className="empty-list"><span><Icon name="cart" size={32} /></span><h2>Seu carrinho está vazio</h2><p>Adicione jogos às ofertas que você quer comprar.</p></div>}
+      </div>
+    </main>
+  );
 }
 
-function AlertsPage({ alerts, onCreate, onDelete }: { alerts: PriceAlert[]; onCreate: (title: string, target: string) => void; onDelete: (id: string) => void }) {
-  const [channels, setChannels] = useState({ email: true, telegram: false, discord: true, push: true });
-  const [stores, setStores] = useState({ Steam: true, Epic: true, GOG: false, Xbox: false, PlayStation: false });
+function Toggle({ active, setActive, label = "Ativar" }: { active: boolean; setActive: (value: boolean) => void; label?: string }) {
+  return <button className={active ? "toggle active" : "toggle"} onClick={() => setActive(!active)} aria-label={label} aria-pressed={active}><span /></button>;
+}
+
+function AlertsPage({ alerts, onCreate, onDelete, games, favorites, notificationsEnabled, notificationMessage, onNotificationsToggle }: { alerts: PriceAlert[]; onCreate: (title: string, target: string) => void; onDelete: (id: string) => void; games: PromoGame[]; favorites: string[]; notificationsEnabled: boolean; notificationMessage: string; onNotificationsToggle: (value: boolean) => void }) {
   const [alertMenu, setAlertMenu] = useState<string | null>(null);
-  const [gameTitle, setGameTitle] = useState("NEON REQUIEM");
+  const [gameTitle, setGameTitle] = useState("");
   const [targetPrice, setTargetPrice] = useState("60,00");
-  const channelIcons: Record<string, IconName> = { email: "mail", telegram: "telegram", discord: "discord", push: "phone" };
+  useEffect(() => {
+    if (!gameTitle && (games.length || favorites.length)) setGameTitle(games[0]?.title ?? favorites[0]);
+  }, [gameTitle, games, favorites]);
   return (
     <main className="alerts-page">
       <div className="container">
@@ -430,8 +927,8 @@ function AlertsPage({ alerts, onCreate, onDelete }: { alerts: PriceAlert[]; onCr
           <SectionHeader title="Alertas ativos" />
           <div className="alert-cards">
             {alerts.map((alert) => {
-              const game = games.find((item) => item.title === alert.title) ?? games[0];
-              return <div className="alert-card" key={alert.id}><img src={game.image} alt="" /><div className="alert-main"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><div className="target"><span>Preço-alvo<strong>R$ {alert.target}</strong></span><Icon name="arrow" /><span>Preço atual<strong>{game.price}</strong></span></div></div><div className="alert-status"><span><i />ATIVO</span><button aria-label={`Opções do alerta de ${game.title}`} aria-expanded={alertMenu === alert.id} onClick={() => setAlertMenu(alertMenu === alert.id ? null : alert.id)}>•••</button>{alertMenu === alert.id && <div className="alert-menu"><button className="danger" onClick={() => { onDelete(alert.id); setAlertMenu(null); }}><Icon name="trash" />Excluir alerta</button></div>}</div></div>;
+              const game = games.find((item) => item.title === alert.title);
+              return <div className="alert-card" key={alert.id}><img src={game?.image ?? images.digital} alt="" /><div className="alert-main">{game && <StoreTag>{game.store}</StoreTag>}<h3>{game?.title ?? alert.title}</h3><div className="target"><span>Preço-alvo<strong>R$ {alert.target}</strong></span><Icon name="arrow" /><span>Preço atual<strong>{game?.price ?? "Oferta encerrada"}</strong></span></div></div><div className="alert-status"><span><i />{game ? "ATIVO" : "AGUARDANDO"}</span><button aria-label={`Opções do alerta de ${alert.title}`} aria-expanded={alertMenu === alert.id} onClick={() => setAlertMenu(alertMenu === alert.id ? null : alert.id)}>•••</button>{alertMenu === alert.id && <div className="alert-menu"><button className="danger" onClick={() => { onDelete(alert.id); setAlertMenu(null); }}><Icon name="trash" />Excluir alerta</button></div>}</div></div>;
             })}
             {!alerts.length && <div className="empty-list"><h2>Você ainda não tem alertas</h2><p>Escolha um jogo e defina o preço que gostaria de pagar.</p></div>}
           </div>
@@ -440,16 +937,16 @@ function AlertsPage({ alerts, onCreate, onDelete }: { alerts: PriceAlert[]; onCr
         <div className="alerts-layout">
           <section className="form-card">
             <div className="form-head"><span><Icon name="plus" /></span><div><h2>Criar novo alerta</h2><p>Você será avisado assim que o preço chegar lá.</p></div></div>
-            <label>Jogo<div className="input"><Icon name="search" /><select value={gameTitle} onChange={(event) => setGameTitle(event.target.value)} aria-label="Jogo para o alerta">{games.map((game) => <option key={game.title} value={game.title}>{game.title}</option>)}</select></div></label>
+            <label>Jogo<div className="input"><Icon name="search" /><select disabled={!games.length && !favorites.length} value={gameTitle} onChange={(event) => setGameTitle(event.target.value)} aria-label="Jogo para o alerta">{games.map((game) => <option key={game.id} value={game.title}>{game.title}</option>)}{favorites.filter((title) => !games.some((game) => game.title === title)).map((title) => <option key={title} value={title}>{title} (salvo)</option>)}</select></div></label>
             <label>Preço-alvo<div className="input prefix"><span>R$</span><input inputMode="decimal" value={targetPrice} onChange={(event) => setTargetPrice(event.target.value)} aria-label="Preço-alvo em reais" /></div></label>
-            <fieldset><legend>Lojas</legend><div className="checks">{Object.entries(stores).map(([name, checked]) => <button className={checked ? "check active" : "check"} key={name} onClick={() => setStores({ ...stores, [name]: !checked })}><span>{checked && <Icon name="check" size={14} />}</span>{name}</button>)}</div></fieldset>
-            <fieldset><legend>Canais de aviso</legend><div className="channel-list">{Object.entries(channels).map(([name, active]) => <div key={name}><span><Icon name={channelIcons[name]} />{name === "email" ? "E-mail" : name[0].toUpperCase() + name.slice(1)}</span><Toggle active={active} setActive={(value) => setChannels({ ...channels, [name]: value })} /></div>)}</div></fieldset>
-            <Button className="full" onClick={() => { onCreate(gameTitle, targetPrice); }}><Icon name="bell" />Criar alerta</Button>
+            <fieldset><legend>Lojas monitoradas</legend><p className="notification-note">Steam, Epic Games Store e GOG. A disponibilidade varia conforme os dados públicos das lojas.</p></fieldset>
+            <fieldset><legend>Notificações neste dispositivo</legend><div className="channel-list"><div><span><Icon name="bell" />Avisos de promoções</span><Toggle active={notificationsEnabled} setActive={onNotificationsToggle} label="Ativar ou desativar notificações" /></div></div><p className="notification-note">{notificationMessage || "Os avisos aparecem enquanto o site está aberto e a permissão do navegador está liberada."}</p></fieldset>
+            <Button className="full" onClick={() => { if (gameTitle) onCreate(gameTitle, targetPrice); }}><Icon name="bell" />Criar alerta</Button>
           </section>
 
           <section className="history-card">
             <SectionHeader title="Histórico recente" link="Ver tudo" />
-            {games.slice(3, 6).map((game, i) => <div className="history-row" key={game.title}><span className="history-check"><Icon name="check" /></span><div><strong>{game.title}</strong><p>Atingiu <b>{game.price}</b> na {game.store}</p><small>{i + 1} dia{i ? "s" : ""} atrás</small></div></div>)}
+            {games.slice(0, 3).map((game, i) => <div className="history-row" key={game.id}><span className="history-check"><Icon name="check" /></span><div><strong>{game.title}</strong><p>Em promoção por <b>{game.price}</b> na {game.store}</p><small>Oferta ativa</small></div></div>)}
             <div className="history-tip"><Icon name="bell" /><p><strong>Dica GamePing</strong>Alertas com mais lojas encontram ofertas até 3× mais rápido.</p></div>
           </section>
         </div>
@@ -458,17 +955,16 @@ function AlertsPage({ alerts, onCreate, onDelete }: { alerts: PriceAlert[]; onCr
   );
 }
 
-function Modal({ type, close, onSuccess }: { type: "login" | "alert"; close: () => void; onSuccess: (title: string, target: string) => void }) {
+function Modal({ type, close, onSuccess, onLogin }: { type: "login" | "alert"; close: () => void; onSuccess: (title: string, target: string) => void; onLogin: (email: string) => void }) {
+  const [email, setEmail] = useState("");
   return (
     <div className="modal-backdrop" onMouseDown={close}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={close}><Icon name="x" /></button>
         {type === "login" ? <>
-          <span className="modal-logo">G</span><h2>Entre no GamePing</h2><p>Salve jogos, sincronize sua lista e nunca perca uma promoção.</p>
-          <div className="login-form"><label>E-mail<div className="input"><Icon name="mail" /><input type="email" placeholder="seu@email.com" /></div></label><label>Senha<div className="input"><input type="password" placeholder="Sua senha" /></div></label><Button className="full">Entrar</Button><button className="create-account">Criar conta</button></div>
-          <div className="login-divider"><span>ou continue com</span></div>
-          <div className="socials"><Button variant="secondary"><span className="social google">G</span>Continuar com Google</Button><Button variant="secondary"><span className="social steam">S</span>Continuar com Steam</Button><Button variant="secondary"><span className="social discord">D</span>Continuar com Discord</Button></div>
-          <small>Ao continuar, você concorda com nossos Termos e Política de Privacidade.</small>
+          <span className="modal-logo">G</span><h2>Entrar no GamePing</h2><p>Esta demonstração salva sua sessão somente neste navegador. Nenhuma senha é solicitada.</p>
+          <form className="login-form" onSubmit={(event) => { event.preventDefault(); if (email.trim()) onLogin(email.trim()); }}><label>E-mail<div className="input"><Icon name="mail" /><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="seu@email.com" /></div></label><Button className="full">Continuar</Button></form>
+          <small>Login de demonstração local. Não é uma conta real e não sincroniza entre dispositivos.</small>
         </> : <>
           <span className="modal-logo"><Icon name="bell" /></span><h2>Criar alerta de preço</h2><p>Defina seu preço ideal para Neon Requiem.</p>
           <label>Preço-alvo<div className="input prefix"><span>R$</span><input defaultValue="60,00" autoFocus /></div></label>
@@ -488,29 +984,181 @@ export default function App() {
   const [page, setPage] = useState<Page>("home");
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState<"login" | "alert" | null>(null);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [toast, setToast] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(() => readSaved("gameping:favorites", ["NEON REQUIEM", "NIGHT PROTOCOL"]));
-  const [alerts, setAlerts] = useState<PriceAlert[]>(() => readSaved("gameping:alerts", initialAlerts));
+  const [category, setCategory] = useState<GameCategory | "Todos">("Todos");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("popular");
+  const [games, setGames] = useState<PromoGame[]>([]);
+  const [freeGames, setFreeGames] = useState<FreeGame[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dealsError, setDealsError] = useState("");
+  const [freeGamesError, setFreeGamesError] = useState("");
+  const [notificationMessage, setNotificationMessage] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [usdBrl, setUsdBrl] = useState<number | null>(null);
+  const [usdBrlUpdatedAt, setUsdBrlUpdatedAt] = useState<number | null>(null);
+  const [usdBrlStale, setUsdBrlStale] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>(() => readSaved("gameping:favorites", []));
+  const [alerts, setAlerts] = useState<PriceAlert[]>(() => readSaved("gameping:alerts", []));
+  const [cart, setCart] = useState<SavedCartItem[]>(() => readSaved("gameping:cart", []));
+  const [storeVisits, setStoreVisits] = useState<Record<string, number>>(() => readSaved("gameping:store-visits", {}));
+  const [gameVisits, setGameVisits] = useState<Record<string, number>>(() => readSaved("gameping:game-visits", {}));
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => readSaved("gameping:notifications-enabled", false));
+  const [accountEmail, setAccountEmail] = useState(() => readSaved("gameping:demo-account", ""));
+  const requireLogin = (action: () => void) => {
+    if (accountEmail) {
+      action();
+      return;
+    }
+    setPendingAction(() => action);
+    setModal("login");
+  };
+  const guardedVisitGame = (game: PromoGame) => requireLogin(() => visitGame(game));
+  const guardedBuy = (url: string) => requireLogin(() => openOffer(url));
+  const guardedFavorite = (title: string) => requireLogin(() => toggleFavorite(title));
+  const guardedCart = (game: PromoGame) => requireLogin(() => toggleCart(game));
   const go = (next: Page) => { setPage(next); setQuery(""); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const toggleFavorite = (title: string) => setFavorites((current) => current.includes(title) ? current.filter((item) => item !== title) : [...current, title]);
+  const toggleCart = (game: PromoGame) => setCart((current) => current.some((item) => item.gameId === game.gameId)
+    ? current.filter((item) => item.gameId !== game.gameId)
+    : [...current, { gameId: game.gameId, title: game.title, image: game.image, url: game.url, appUrl: game.appUrl, store: game.store, price: game.price, priceValue: game.priceValue }]);
+  const visitGame = (game: PromoGame) => {
+    setStoreVisits((current) => ({ ...current, [game.store]: (current[game.store] ?? 0) + 1 }));
+    setGameVisits((current) => ({ ...current, [game.gameId]: (current[game.gameId] ?? 0) + 1 }));
+    openOffer(game.url);
+  };
+  const recommendations = [...games].sort((a, b) => {
+    const score = (game: PromoGame) => (gameVisits[game.gameId] ?? 0) * 100
+      + (storeVisits[game.store] ?? 0) * 10
+      + Math.log10(game.popularity + 1);
+    return score(b) - score(a);
+  });
+  const toggleNotifications = async (enabled: boolean) => {
+    if (!enabled) {
+      setNotificationsEnabled(false);
+      setNotificationMessage("Notificações desativadas neste dispositivo.");
+      return;
+    }
+    if (!("Notification" in window)) {
+      setNotificationMessage("Este navegador não oferece notificações do sistema.");
+      return;
+    }
+    try {
+      const permission = await window.Notification.requestPermission();
+      if (permission === "granted") {
+        setNotificationsEnabled(true);
+        setNotificationMessage("Notificações ativadas. Elas funcionam enquanto o site estiver aberto.");
+      } else {
+        setNotificationsEnabled(false);
+        setNotificationMessage("Permissão negada pelo navegador. Altere a permissão do site para ativar avisos.");
+      }
+    } catch (error) {
+      setNotificationsEnabled(false);
+      setNotificationMessage(`Não foi possível pedir permissão para notificações: ${String(error)}`);
+    }
+  };
   const alertSuccess = () => { setModal(null); setToast(true); window.setTimeout(() => setToast(false), 3500); };
   const createAlert = (title: string, target: string) => {
     setAlerts((current) => [{ id: `alert-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title, target: target.trim() || "60,00" }, ...current]);
+    setFavorites((current) => current.includes(title) ? current : [...current, title]);
     alertSuccess();
   };
+  useEffect(() => {
+    let cancelled = false;
+    let refreshing = false;
+    let controller: AbortController | undefined;
+
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      controller = new AbortController();
+      const [dealsResult, freeGamesResult] = await Promise.allSettled([
+        (async () => {
+          const exchangeRate = await fetchUsdBrl(controller.signal);
+          return { exchangeRate, feed: await fetchActiveDeals(controller.signal, exchangeRate.rate) };
+        })(),
+        fetchActiveFreeGames(controller.signal),
+      ]);
+      if (!cancelled) {
+        if (dealsResult.status === "fulfilled") {
+          setUsdBrl(dealsResult.value.exchangeRate.rate);
+          setUsdBrlUpdatedAt(dealsResult.value.exchangeRate.updatedAt);
+          setUsdBrlStale(dealsResult.value.exchangeRate.stale);
+          setGames(dealsResult.value.feed.deals);
+          const messages = [...dealsResult.value.feed.errors];
+          if (dealsResult.value.exchangeRate.stale) messages.unshift("A cotação atualizada não está disponível; usando o último câmbio salvo.");
+          setDealsError(messages.join(" "));
+        } else {
+          setDealsError(`Promoções: ${String(dealsResult.reason)}`);
+        }
+        if (freeGamesResult.status === "fulfilled") {
+          setFreeGames(freeGamesResult.value);
+          setFreeGamesError("");
+        } else {
+          setFreeGamesError(`Jogos grátis: ${String(freeGamesResult.reason)}`);
+        }
+        setLastUpdated(new Date());
+        setLoading(false);
+      }
+      refreshing = false;
+    };
+
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      window.clearInterval(interval);
+    };
+  }, [refreshVersion]);
   useEffect(() => { window.localStorage.setItem("gameping:favorites", JSON.stringify(favorites)); }, [favorites]);
   useEffect(() => { window.localStorage.setItem("gameping:alerts", JSON.stringify(alerts)); }, [alerts]);
+  useEffect(() => { window.localStorage.setItem("gameping:cart", JSON.stringify(cart)); }, [cart]);
+  useEffect(() => { window.localStorage.setItem("gameping:store-visits", JSON.stringify(storeVisits)); }, [storeVisits]);
+  useEffect(() => { window.localStorage.setItem("gameping:game-visits", JSON.stringify(gameVisits)); }, [gameVisits]);
+  useEffect(() => { window.localStorage.setItem("gameping:notifications-enabled", JSON.stringify(notificationsEnabled)); }, [notificationsEnabled]);
+  useEffect(() => { window.localStorage.setItem("gameping:demo-account", JSON.stringify(accountEmail)); }, [accountEmail]);
+  useEffect(() => {
+    if (notificationsEnabled && (!("Notification" in window) || window.Notification.permission !== "granted")) {
+      setNotificationsEnabled(false);
+      setNotificationMessage("Notificações desativadas ou sem permissão neste navegador.");
+    }
+  }, []);
+  useEffect(() => {
+    if (!notificationsEnabled || !("Notification" in window) || window.Notification.permission !== "granted") return;
+    const notified = readSaved<Record<string, string>>("gameping:notified-deals", {});
+    const sendNotification = (key: string, game: PromoGame, message: string) => {
+      if (notified[key] === game.id) return;
+      const notification = new window.Notification("GamePing: promoção encontrada", { body: `${game.title} por ${game.price} na ${game.store}. ${message}` });
+      notification.onclick = () => { window.open(game.url, "_blank", "noopener,noreferrer"); notification.close(); };
+      notified[key] = game.id;
+    };
+    favorites.forEach((title) => {
+      const game = games.find((item) => item.title.toLocaleLowerCase("pt-BR") === title.toLocaleLowerCase("pt-BR"));
+      if (game) sendNotification(`saved:${title}`, game, "O jogo da sua lista está em oferta.");
+    });
+    alerts.forEach((alert) => {
+      const game = games.find((item) => item.title.toLocaleLowerCase("pt-BR") === alert.title.toLocaleLowerCase("pt-BR"));
+      const target = Number(alert.target.replace(/\./g, "").replace(",", "."));
+      if (game && Number.isFinite(target) && game.priceValue <= target) {
+        sendNotification(`alert:${alert.id}`, game, "O preço chegou ao valor que você definiu.");
+      }
+    });
+    window.localStorage.setItem("gameping:notified-deals", JSON.stringify(notified));
+  }, [alerts, favorites, games, notificationsEnabled]);
   useEffect(() => { document.body.style.overflow = modal ? "hidden" : ""; }, [modal]);
   return (
     <div className="app">
-      <Header page={page} go={go} onLogin={() => setModal("login")} query={query} onSearch={setQuery} />
-      {query.trim() ? <SearchResults query={query} go={go} favorites={favorites} toggleFavorite={toggleFavorite} /> : page === "home" && <Home go={go} favorites={favorites} toggleFavorite={toggleFavorite} />}
-      {!query.trim() && page === "free" && <FreeGamesPage go={go} />}
-      {!query.trim() && page === "new" && <NewReleasesPage go={go} favorites={favorites} toggleFavorite={toggleFavorite} />}
-      {!query.trim() && page === "game" && <GamePage onAlert={() => setModal("alert")} favorites={favorites} toggleFavorite={toggleFavorite} />}
-      {!query.trim() && page === "alerts" && <AlertsPage alerts={alerts} onCreate={createAlert} onDelete={(id) => setAlerts((current) => current.filter((alert) => alert.id !== id))} />}
-      {!query.trim() && page === "wishlist" && <WishlistPage favorites={favorites} toggleFavorite={toggleFavorite} go={go} />}
-      {modal && <Modal type={modal} close={() => setModal(null)} onSuccess={createAlert} />}
+      <Header page={page} go={go} onLogin={() => setModal("login")} query={query} onSearch={setQuery} games={games} usdBrl={usdBrl} cartCount={cart.length} accountEmail={accountEmail} onLogout={() => setAccountEmail("")} />
+      {query.trim() ? <SearchResults query={query} go={go} favorites={favorites} toggleFavorite={guardedFavorite} games={games} loading={loading} error={dealsError} onVisit={guardedVisitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} /> : page === "home" && <Home go={go} favorites={favorites} games={games} freeGames={freeGames} loading={loading} error={[dealsError, freeGamesError].filter(Boolean).join(" ")} lastUpdated={lastUpdated} onRefresh={() => setRefreshVersion((version) => version + 1)} recommendations={recommendations} onVisit={guardedVisitGame} onBuy={guardedBuy} onFavorite={guardedFavorite} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} usdBrlUpdatedAt={usdBrlUpdatedAt} usdBrlStale={usdBrlStale} personalized={Object.values(gameVisits).some((count) => count > 0)} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} />}
+      {!query.trim() && page === "free" && <FreeGamesPage freeGames={freeGames} loading={loading} error={freeGamesError} onBuy={guardedBuy} />}
+      {!query.trim() && page === "new" && <NewReleasesPage favorites={favorites} toggleFavorite={guardedFavorite} games={games} loading={loading} error={dealsError} onVisit={guardedVisitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} />}
+      {!query.trim() && page === "game" && <GamePage onAlert={() => requireLogin(() => setModal("alert"))} favorites={favorites} toggleFavorite={guardedFavorite} games={games} />}
+      {!query.trim() && page === "alerts" && <AlertsPage alerts={alerts} onCreate={(title, target) => requireLogin(() => createAlert(title, target))} onDelete={(id) => setAlerts((current) => current.filter((alert) => alert.id !== id))} games={games} favorites={favorites} notificationsEnabled={notificationsEnabled} notificationMessage={notificationMessage} onNotificationsToggle={(value) => void toggleNotifications(value)} />}
+      {!query.trim() && page === "wishlist" && <WishlistPage favorites={favorites} toggleFavorite={guardedFavorite} go={go} games={games} onVisit={guardedVisitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} />}
+      {!query.trim() && page === "cart" && <CartPage cart={cart} games={games} removeFromCart={(gameId) => setCart((current) => current.filter((item) => item.gameId !== gameId))} onBuy={guardedBuy} />}
+      {modal && <Modal type={modal} close={() => { setModal(null); setPendingAction(null); }} onSuccess={createAlert} onLogin={(email) => { setAccountEmail(email); setModal(null); pendingAction?.(); setPendingAction(null); }} />}
       <div className={toast ? "toast show" : "toast"}><span><Icon name="check" /></span><div><strong>Alerta criado!</strong><p>Vamos avisar quando o preço baixar.</p></div><button onClick={() => setToast(false)}><Icon name="x" /></button></div>
     </div>
   );
