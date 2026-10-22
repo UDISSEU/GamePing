@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { fetchActiveDeals, fetchActiveFreeGames, fetchGameHunterConsoleOffers, fetchGameHunterConsolePlatforms, fetchGameOffers, fetchGameTrailer, fetchSteamArtwork, fetchSteamCloudSupport, fetchSteamGameDetails, fetchUsdBrl, fetchYouTubeTrailer, gameCategories, officialStoreSearchUrl, searchGameCatalog, searchNintendoCatalog, type FreeGame, type GameCategory, type GameOffer, type GamePreview, type PromoGame, type SteamGameDetails } from "./promotions";
 
-type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist" | "cart" | "collection";
+type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist" | "cart" | "collection" | "profile";
 type CollectionKey = "offers" | "popular" | "other" | "recommended" | "free";
 type IconName =
   | "search"
@@ -409,10 +409,9 @@ function SectionHeader({ eyebrow, title, link, onLink }: { eyebrow?: string; tit
 function Header({
   page,
   go,
-  onLogin,
+  onProfile,
   cartCount,
   accountEmail,
-  onLogout,
   query,
   onSearch,
   games,
@@ -420,10 +419,9 @@ function Header({
 }: {
   page: Page;
   go: (page: Page) => void;
-  onLogin: () => void;
+  onProfile: () => void;
   cartCount: number;
   accountEmail: string;
-  onLogout: () => void;
   query: string;
   onSearch: (query: string) => void;
   games: PromoGame[];
@@ -546,7 +544,7 @@ function Header({
         </nav>
         <div className="header-actions">
           <Button className="alerts-entry" ariaLabel="Abrir central de alertas" onClick={() => go("alerts")}><Icon name="bell" /><span>Ativar alertas</span></Button>
-          {accountEmail ? <button className="account-chip" onClick={onLogout} title="Sair da conta de demonstração" aria-label="Sair da conta de demonstração"><Icon name="user" />Conta · Sair</button> : <button className="avatar" onClick={onLogin} aria-label="Abrir login"><Icon name="user" /></button>}
+          {accountEmail ? <button className="account-chip" onClick={onProfile} title="Abrir perfil" aria-label="Abrir perfil"><Icon name="user" />Meu perfil</button> : <button className="avatar" onClick={onProfile} aria-label="Abrir perfil"><Icon name="user" /></button>}
           <button className="menu-button" onClick={() => setOpen(!open)} aria-label={open ? "Fechar menu" : "Abrir menu"} aria-expanded={open} aria-controls="primary-navigation"><Icon name={open ? "x" : "menu"} /></button>
         </div>
       </div>
@@ -1365,6 +1363,73 @@ function Modal({ type, close, onSuccess, onLogin, alertGame }: { type: "login" |
   );
 }
 
+function ProfilePage({ email, name, favorites, alerts, cartCount, notificationsEnabled, notificationMessage, onNotificationsToggle, go, onAuthenticate, onLogout }: {
+  email: string;
+  name: string;
+  favorites: number;
+  alerts: number;
+  cartCount: number;
+  notificationsEnabled: boolean;
+  notificationMessage: string;
+  onNotificationsToggle: (enabled: boolean) => void;
+  go: (page: Page) => void;
+  onAuthenticate: (email: string, name: string) => void;
+  onLogout: () => void;
+}) {
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authName, setAuthName] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const authenticate = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (authMode === "register" && authPassword !== authConfirmPassword) {
+      setAuthError("As senhas não coincidem.");
+      return;
+    }
+    setAuthError("");
+    onAuthenticate(authEmail.trim(), authMode === "register" ? authName.trim() : "");
+  };
+  if (!email) return <main className="profile-page"><div className="container profile-container profile-auth-layout">
+    <section className="profile-auth-intro"><span className="eyebrow">SEU PERFIL GAMEPING</span><h1>Seus jogos.<br />Suas ofertas.</h1><p>Entre ou crie uma conta para acompanhar favoritos, organizar alertas de preço e deixar suas ofertas sempre por perto.</p><div className="profile-auth-perks"><span><Icon name="heart" />Sua lista de jogos</span><span><Icon name="bell" />Alertas personalizados</span><span><Icon name="chart" />Ofertas acompanhadas</span></div></section>
+    <section className="profile-auth-card"><div className="profile-auth-tabs" role="tablist" aria-label="Acesso à conta"><button type="button" role="tab" aria-selected={authMode === "login"} className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthError(""); }}>Entrar</button><button type="button" role="tab" aria-selected={authMode === "register"} className={authMode === "register" ? "active" : ""} onClick={() => { setAuthMode("register"); setAuthError(""); }}>Criar conta</button></div>
+      <h2>{authMode === "login" ? "Bem-vindo de volta" : "Crie sua conta"}</h2><p>{authMode === "login" ? "Acesse seu perfil para continuar acompanhando seus jogos." : "Leva só um instante para montar seu radar de ofertas."}</p>
+      <form className="profile-auth-form" onSubmit={authenticate}>
+        {authMode === "register" && <label>Nome<div className="input"><Icon name="user" /><input required autoComplete="name" value={authName} onChange={(event) => setAuthName(event.target.value)} placeholder="Como podemos chamar você?" /></div></label>}
+        <label>E-mail<div className="input"><Icon name="mail" /><input required type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="voce@email.com" /></div></label>
+        <label>Senha<div className="input"><input required type="password" minLength={8} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Mínimo de 8 caracteres" /></div></label>
+        {authMode === "register" && <label>Confirmar senha<div className="input"><input required type="password" minLength={8} autoComplete="new-password" value={authConfirmPassword} onChange={(event) => setAuthConfirmPassword(event.target.value)} placeholder="Digite a senha novamente" /></div></label>}
+        {authError && <span className="profile-auth-error" role="alert">{authError}</span>}
+        <Button className="full">{authMode === "login" ? "Entrar no GamePing" : "Criar minha conta"}<Icon name="arrow" /></Button>
+      </form>
+      <small className="profile-auth-note">Protótipo local: sua sessão fica neste navegador. As senhas não são armazenadas nem verificadas por um servidor.</small>
+    </section>
+  </div></main>;
+  const initials = (name || email.split("@")[0]).slice(0, 2).toLocaleUpperCase("pt-BR") || "GP";
+  const displayName = name || email.split("@")[0].replace(/[._-]+/g, " ");
+  return <main className="profile-page"><div className="container profile-container">
+    <div className="page-title"><div className="profile-avatar">{initials}</div><div><span className="eyebrow">SUA CONTA GAMEPING</span><h1>Olá, {displayName}</h1><p>{email}</p></div></div>
+    <section className="profile-overview">
+      <div><span className="eyebrow">SEU RADAR DE JOGOS</span><h2>Tudo em um só lugar</h2><p>Acompanhe seus jogos salvos, alertas de preço e ofertas que estão no seu radar.</p></div>
+      <Button variant="outline" onClick={onLogout}>Sair da conta</Button>
+    </section>
+    <div className="profile-stats">
+      <button onClick={() => go("wishlist")}><span className="profile-stat-icon"><Icon name="heart" /></span><span><small>JOGOS FAVORITOS</small><strong>{favorites}</strong></span><Icon name="chevron" /></button>
+      <button onClick={() => go("alerts")}><span className="profile-stat-icon"><Icon name="bell" /></span><span><small>ALERTAS DE PREÇO</small><strong>{alerts}</strong></span><Icon name="chevron" /></button>
+      <button onClick={() => go("cart")}><span className="profile-stat-icon"><Icon name="cart" /></span><span><small>NO CARRINHO</small><strong>{cartCount}</strong></span><Icon name="chevron" /></button>
+    </div>
+    <div className="profile-columns">
+      <section className="profile-panel"><span className="eyebrow">ACESSO RÁPIDO</span><h2>Suas listas</h2>
+        <button className="profile-link" onClick={() => go("wishlist")}><span><Icon name="heart" /></span><span><strong>Minha lista</strong><small>Veja os jogos que você quer acompanhar</small></span><Icon name="chevron" /></button>
+        <button className="profile-link" onClick={() => go("alerts")}><span><Icon name="bell" /></span><span><strong>Central de alertas</strong><small>Revise seus preços desejados</small></span><Icon name="chevron" /></button>
+        <button className="profile-link" onClick={() => go("cart")}><span><Icon name="cart" /></span><span><strong>Carrinho</strong><small>Confira as ofertas que separou</small></span><Icon name="chevron" /></button>
+      </section>
+      <section className="profile-panel profile-notifications"><span className="eyebrow">PREFERÊNCIAS</span><h2>Notificações</h2><div className="profile-notification-row"><span className="profile-stat-icon"><Icon name="bell" /></span><span><strong>Avisos neste dispositivo</strong><small>Receba alertas quando um jogo salvo atingir o preço desejado.</small></span><button className={notificationsEnabled ? "toggle active" : "toggle"} onClick={() => onNotificationsToggle(!notificationsEnabled)} aria-label={notificationsEnabled ? "Desativar notificações" : "Ativar notificações"} aria-pressed={notificationsEnabled}><span /></button></div><p className="notification-note">{notificationMessage || (notificationsEnabled ? "Notificações ativadas neste dispositivo." : "Ative para receber avisos enquanto o GamePing estiver aberto.")}</p></section>
+    </div>
+  </div></main>;
+}
+
 function Footer() {
   return <footer><div className="container footer-inner"><div><div className="logo"><span className="logo-mark">G</span><span>GAME<span>PING</span></span></div><p>As melhores ofertas de jogos, direto no seu radar.</p><div className="social-links"><button aria-label="Instagram"><Icon name="instagram" /></button><button aria-label="Discord"><Icon name="discord" /></button><button aria-label="X"><span>𝕏</span></button><button aria-label="YouTube"><Icon name="youtube" /></button></div></div><div className="footer-links"><span>EXPLORAR</span><button>Promoções</button><button>Jogos grátis</button><button>Lançamentos</button></div><div className="footer-links"><span>GAMEPING</span><button>Sobre</button><button>Como funciona</button><button>Ajuda</button></div><div className="newsletter"><span>OFERTAS NA SUA CAIXA</span><p>Um resumo semanal. Sem spam.</p><div className="input"><Icon name="mail" /><input placeholder="seu@email.com" /><Button><Icon name="arrow" /></Button></div></div></div><div className="container copyright">© 2026 GamePing. Preços atualizados automaticamente.<span>Brasil · Português</span></div></footer>;
 }
@@ -1398,6 +1463,7 @@ export default function App() {
   const [gameVisits, setGameVisits] = useState<Record<string, number>>(() => readSaved("gameping:game-visits", {}));
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => readSaved("gameping:notifications-enabled", false));
   const [accountEmail, setAccountEmail] = useState(() => readSaved("gameping:demo-account", ""));
+  const [accountName, setAccountName] = useState(() => readSaved("gameping:demo-account-name", ""));
   const requireLogin = (action: () => void) => {
     if (accountEmail) {
       action();
@@ -1518,6 +1584,7 @@ export default function App() {
   useEffect(() => { window.localStorage.setItem("gameping:game-visits", JSON.stringify(gameVisits)); }, [gameVisits]);
   useEffect(() => { window.localStorage.setItem("gameping:notifications-enabled", JSON.stringify(notificationsEnabled)); }, [notificationsEnabled]);
   useEffect(() => { window.localStorage.setItem("gameping:demo-account", JSON.stringify(accountEmail)); }, [accountEmail]);
+  useEffect(() => { window.localStorage.setItem("gameping:demo-account-name", JSON.stringify(accountName)); }, [accountName]);
   useEffect(() => {
     if (notificationsEnabled && (!("Notification" in window) || window.Notification.permission !== "granted")) {
       setNotificationsEnabled(false);
@@ -1547,13 +1614,42 @@ export default function App() {
     window.localStorage.setItem("gameping:notified-deals", JSON.stringify(notified));
   }, [alerts, favorites, games, notificationsEnabled]);
   useEffect(() => { document.body.style.overflow = modal ? "hidden" : ""; }, [modal]);
+  useEffect(() => {
+    const root = document.querySelector(".app");
+    if (!root || !("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -35px 0px" });
+    const observe = (node: ParentNode) => {
+      node.querySelectorAll<HTMLElement>(".hero-copy, .section-heading, .live-card, .free-card, .game-card, .page-title, .game-overview, .price-panel, .chart-panel, .form-card, .history-card, .cart-item, .alert-card").forEach((element) => observer.observe(element));
+    };
+    root.classList.add("motion-ready");
+    observe(root);
+    const mutations = new MutationObserver((records) => records.forEach((record) => record.addedNodes.forEach((node) => {
+      if (node instanceof HTMLElement) {
+        if (node.matches(".hero-copy, .section-heading, .live-card, .free-card, .game-card, .page-title, .game-overview, .price-panel, .chart-panel, .form-card, .history-card, .cart-item, .alert-card")) observer.observe(node);
+        observe(node);
+      }
+    })));
+    mutations.observe(root, { childList: true, subtree: true });
+    return () => { observer.disconnect(); mutations.disconnect(); root.classList.remove("motion-ready"); };
+  }, [page, query]);
   return (
-    <div className="app">
+    <div className="app" onPointerMove={(event) => {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      event.currentTarget.style.setProperty("--pointer-x", `${event.clientX - bounds.left}px`);
+      event.currentTarget.style.setProperty("--pointer-y", `${event.clientY - bounds.top}px`);
+    }}>
       <video className="site-background-video" autoPlay muted loop playsInline aria-hidden="true">
         <source src="/planodefundo.mp4" type="video/mp4" />
       </video>
       <div className="site-background-shade" aria-hidden="true" />
-      <Header page={page} go={go} onLogin={() => setModal("login")} query={query} onSearch={setQuery} games={games} usdBrl={usdBrl} cartCount={cart.length} accountEmail={accountEmail} onLogout={() => setAccountEmail("")} />
+      <Header page={page} go={go} onProfile={() => go("profile")} query={query} onSearch={setQuery} games={games} usdBrl={usdBrl} cartCount={cart.length} accountEmail={accountEmail} />
       {query.trim() ? <SearchResults query={query} go={go} favorites={favorites} toggleFavorite={guardedFavorite} games={games} loading={loading} error={dealsError} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} /> : page === "home" && <Home go={go} favorites={favorites} games={games} freeGames={freeGames} loading={loading} error={[dealsError, freeGamesError].filter(Boolean).join(" ")} lastUpdated={lastUpdated} onRefresh={() => setRefreshVersion((version) => version + 1)} recommendations={recommendations} onVisit={visitGame} onBuy={guardedBuy} onFavorite={guardedFavorite} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} usdBrlUpdatedAt={usdBrlUpdatedAt} usdBrlStale={usdBrlStale} personalized={Object.values(gameVisits).some((count) => count > 0)} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} onViewMore={viewCollection} />}
       {!query.trim() && page === "free" && <FreeGamesPage freeGames={freeGames} loading={loading} error={freeGamesError} onBuy={guardedBuy} />}
       {!query.trim() && page === "new" && <NewReleasesPage favorites={favorites} toggleFavorite={guardedFavorite} games={games} loading={loading} error={dealsError} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} />}
@@ -1562,6 +1658,7 @@ export default function App() {
       {!query.trim() && page === "wishlist" && <WishlistPage favorites={favorites} toggleFavorite={guardedFavorite} go={go} games={games} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} />}
       {!query.trim() && page === "cart" && <CartPage cart={cart} games={games} removeFromCart={(gameId) => setCart((current) => current.filter((item) => item.gameId !== gameId))} onBuy={guardedBuy} />}
       {!query.trim() && page === "collection" && <CollectionPage collection={collectionKey} games={games} recommendations={recommendations} freeGames={freeGames} favorites={favorites} cartIds={cart.map((item) => item.gameId)} category={category} sortOrder={sortOrder} loading={loading} error={[dealsError, freeGamesError].filter(Boolean).join(" ")} onBack={() => go("home")} onVisit={visitGame} onBuy={guardedBuy} onFavorite={guardedFavorite} toggleCart={guardedCart} />}
+      {!query.trim() && page === "profile" && <ProfilePage email={accountEmail} name={accountName} favorites={favorites.length} alerts={alerts.length} cartCount={cart.length} notificationsEnabled={notificationsEnabled} notificationMessage={notificationMessage} onNotificationsToggle={(value) => void toggleNotifications(value)} go={go} onAuthenticate={(email, name) => { setAccountEmail(email); if (name) setAccountName(name); }} onLogout={() => { setAccountEmail(""); go("home"); }} />}
       {modal && <Modal type={modal} close={() => { setModal(null); setAlertGame(null); setPendingAction(null); }} onSuccess={createAlert} onLogin={(email) => { setAccountEmail(email); setModal(null); pendingAction?.(); setPendingAction(null); }} alertGame={alertGame} />}
       <div className={toast ? "toast show" : "toast"}><span><Icon name="check" /></span><div><strong>Alerta criado!</strong><p>Vamos avisar quando o preço baixar.</p></div><button onClick={() => setToast(false)}><Icon name="x" /></button></div>
     </div>
