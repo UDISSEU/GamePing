@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { fetchActiveDeals, fetchActiveFreeGames, fetchGameHunterConsoleOffers, fetchGameHunterConsolePlatforms, fetchGameOffers, fetchGameTrailer, fetchSteamArtwork, fetchSteamCloudSupport, fetchSteamGameDetails, fetchUsdBrl, fetchYouTubeTrailer, gameCategories, officialStoreSearchUrl, searchGameCatalog, searchNintendoCatalog, type FreeGame, type GameCategory, type GameOffer, type GamePreview, type PromoGame, type SteamGameDetails } from "./promotions";
+import { fetchActiveDeals, fetchActiveFreeGames, fetchGameHunterConsoleOffers, fetchGameHunterConsolePlatforms, fetchGameOffers, fetchGameTrailer, fetchSteamArtwork, fetchSteamCloudSupport, fetchSteamGameDetails, fetchUsdBrl, fetchYouTubeTrailer, gameCategories, officialStoreSearchUrl, searchGameCatalog, type FreeGame, type GameCategory, type GameOffer, type GamePreview, type PromoGame, type SteamGameDetails } from "./promotions";
 
 type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist" | "cart" | "collection" | "profile";
 type CollectionKey = "offers" | "popular" | "other" | "recommended" | "free";
@@ -25,7 +25,8 @@ type IconName =
   | "trash"
   | "cart";
 type SortOrder = "popular" | "price-asc" | "price-desc";
-type GamePlatform = "PC" | "PlayStation" | "Xbox";
+type GamePlatform = "Steam" | "Steam Cloud" | "PlayStation" | "Xbox";
+type AlertPlatform = "Steam" | "PlayStation" | "Xbox";
 type SavedCartItem = { gameId: string; title: string; image: string; url: string; appUrl?: string; store: string; price: string; priceValue: number };
 
 const images = {
@@ -45,7 +46,7 @@ const images = {
     "https://images.unsplash.com/photo-1610232801646-58c90c3c5355?auto=format&fit=crop&w=900&q=85",
 };
 
-type PriceAlert = { id: string; title: string; target: string };
+type PriceAlert = { id: string; title: string; target: string; platform: AlertPlatform; enabled: boolean };
 
 const prototypeWishlistTitles = new Set(["neon requiem", "night protocol"]);
 
@@ -70,17 +71,44 @@ function readSavedFavorites() {
 function readSavedAlerts() {
   const savedAlerts = readSaved<unknown>("gameping:alerts", []);
   if (!Array.isArray(savedAlerts)) return [];
-  return savedAlerts.filter((alert): alert is PriceAlert =>
-    typeof alert === "object" &&
-    alert !== null &&
-    "id" in alert &&
-    typeof alert.id === "string" &&
-    "title" in alert &&
-    typeof alert.title === "string" &&
-    !prototypeWishlistTitles.has(alert.title.trim().toLocaleLowerCase("en")) &&
-    "target" in alert &&
-    typeof alert.target === "string"
-  );
+  return savedAlerts.flatMap((alert): PriceAlert[] => {
+    if (
+      typeof alert !== "object" ||
+      alert === null ||
+      !("id" in alert) ||
+      typeof alert.id !== "string" ||
+      !("title" in alert) ||
+      typeof alert.title !== "string" ||
+      prototypeWishlistTitles.has(alert.title.trim().toLocaleLowerCase("en")) ||
+      !("target" in alert) ||
+      typeof alert.target !== "string"
+    ) return [];
+    const platform = "platform" in alert && (alert.platform === "Xbox" || alert.platform === "PlayStation")
+      ? alert.platform
+      : "Steam";
+    return [{
+      id: alert.id,
+      title: alert.title,
+      target: alert.target,
+      platform,
+      enabled: !("enabled" in alert) || alert.enabled !== false,
+    }];
+  });
+}
+
+function parseTargetPrice(value: string) {
+  const trimmed = value.trim();
+  const normalized = trimmed.includes(",")
+    ? trimmed.replace(/\./g, "").replace(",", ".")
+    : trimmed;
+  return /^\d+(?:\.\d{1,2})?$/.test(normalized) ? Number(normalized) : Number.NaN;
+}
+
+function formatCheckedAt(value: string | undefined) {
+  if (!value) return "Horário da consulta indisponível";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Horário da consulta indisponível";
+  return `Consultado pelo GamePing às ${new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(date)}`;
 }
 
 function openOffer(url: string) {
@@ -90,10 +118,10 @@ function openOffer(url: string) {
   }
   try {
     const parsedUrl = new URL(url);
-    const allowedHost = ["steampowered.com", "epicgames.com", "xbox.com", "playstation.com"]
+    const allowedHost = ["steampowered.com", "xbox.com", "playstation.com"]
       .some((domain) => parsedUrl.hostname === domain || parsedUrl.hostname.endsWith(`.${domain}`));
     if (parsedUrl.protocol !== "https:" || !allowedHost) {
-      throw new Error("Only official Steam, Epic Games, Xbox, and PlayStation links can be opened.");
+      throw new Error("Only official Steam, Xbox, and PlayStation links can be opened.");
     }
     window.open(parsedUrl.toString(), "_blank", "noopener,noreferrer");
   } catch (error) {
@@ -105,7 +133,6 @@ function openOffer(url: string) {
 function normalizeCartStore(store: string) {
   const normalized = store.toLocaleLowerCase("en");
   if (normalized.includes("steam")) return "Steam";
-  if (normalized.includes("epic")) return "Epic Games";
   if (normalized.includes("xbox")) return "Xbox";
   if (normalized.includes("playstation")) return "PlayStation";
   return "Steam";
@@ -156,14 +183,16 @@ function Button({
   onClick,
   className = "",
   ariaLabel,
+  disabled = false,
 }: {
   children: ReactNode;
   variant?: "primary" | "secondary" | "outline";
   onClick?: () => void;
   className?: string;
   ariaLabel?: string;
+  disabled?: boolean;
 }) {
-  return <button className={`button button-${variant} ${className}`} onClick={onClick} aria-label={ariaLabel}>{children}</button>;
+  return <button className={`button button-${variant} ${className}`} onClick={onClick} aria-label={ariaLabel} disabled={disabled}>{children}</button>;
 }
 
 function StoreTag({ children }: { children: ReactNode }) {
@@ -444,32 +473,30 @@ function Header({
     }
 
     const activeMatches = games.filter((game) => game.title.toLocaleLowerCase("pt-BR").includes(term.toLocaleLowerCase("pt-BR")));
-    const nintendoMatches = searchNintendoCatalog(term);
-    if (usdBrl === null) {
-      setSuggestions([...activeMatches, ...nintendoMatches].slice(0, 6));
+      if (usdBrl === null) {
+        setSuggestions(activeMatches.slice(0, 6));
       setSuggestionsLoading(false);
       setSuggestionsError("");
       return;
     }
 
     const controller = new AbortController();
-    setSuggestions([...activeMatches, ...nintendoMatches].slice(0, 6));
+    setSuggestions(activeMatches.slice(0, 6));
     setSuggestionsLoading(true);
     setSuggestionsError("");
     const timeout = window.setTimeout(async () => {
       try {
         const catalogMatches = await searchGameCatalog(term, controller.signal, usdBrl, 6);
         if (controller.signal.aborted) return;
-        const availableMatches = [...activeMatches, ...nintendoMatches];
-        const activeByTitle = new Map(availableMatches.map((game) => [game.title.toLocaleLowerCase("pt-BR"), game]));
+        const activeByTitle = new Map(activeMatches.map((game) => [game.title.toLocaleLowerCase("pt-BR"), game]));
         const merged = catalogMatches.map((game) => activeByTitle.get(game.title.toLocaleLowerCase("pt-BR")) ?? game);
-        for (const game of availableMatches) {
+        for (const game of activeMatches) {
           if (!merged.some((match) => match.title.toLocaleLowerCase("pt-BR") === game.title.toLocaleLowerCase("pt-BR"))) merged.push(game);
         }
         setSuggestions(merged.slice(0, 6));
       } catch (error) {
         if (!controller.signal.aborted) {
-          setSuggestions([...activeMatches, ...nintendoMatches].slice(0, 6));
+          setSuggestions(activeMatches.slice(0, 6));
           setSuggestionsError(`Não foi possível consultar as sugestões: ${String(error)}`);
         }
       } finally {
@@ -518,7 +545,7 @@ function Header({
           {suggestions.map((game) => (
             <button type="button" role="option" aria-selected="false" key={game.id} onMouseDown={(event) => event.preventDefault()} onClick={() => submitSearch(game.title)}>
               <img src={game.image} alt="" />
-              <span className="suggestion-game"><strong>{game.title}</strong><small>{game.onSale ? `Em promoção · ${game.price}` : game.price === "Preço indisponível" ? "Sem promoção ativa · preço indisponível" : game.price === "Consultar preço" ? "Nintendo eShop · consultar preço" : `Sem promoção · preço normal ${game.price}`}</small></span>
+              <span className="suggestion-game"><strong>{game.title}</strong><small>{game.onSale ? `Em promoção · ${game.price}` : game.price === "Preço indisponível" ? "Sem promoção ativa · preço indisponível" : `Sem promoção · preço normal ${game.price}`}</small></span>
               {game.onSale && <span className="suggestion-discount">{game.discount}</span>}
             </button>
           ))}
@@ -646,12 +673,6 @@ function GameCard({
       href: `https://www.xbox.com/pt-BR/Search/Results?q=${encodeURIComponent(game.title)}`,
       className: "platform-link-xbox",
     }] : []),
-    ...(game.store === "Epic Games" ? [{
-      name: "Epic Games",
-      symbol: "E",
-      href: `https://store.epicgames.com/pt-BR/browse?q=${encodeURIComponent(game.title)}`,
-      className: "platform-link-epic",
-    }] : []),
   ];
   const steamCloudUrl = game.steamAppId
     ? `https://store.steampowered.com/app/${encodeURIComponent(game.steamAppId)}`
@@ -660,8 +681,8 @@ function GameCard({
   return (
     <article ref={setGameCardRef} className="game-card" onMouseEnter={() => setPreviewActive(true)} onMouseLeave={() => setPreviewActive(false)} onFocus={() => setPreviewActive(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPreviewActive(false); }}>
       <button className="game-card-open" onClick={onClick}>
-        <div className="game-art"><GameArtwork src={game.image} steamAppId={game.steamAppId} />{previewActive && <PreviewPlayer preview={preview} title={game.title} />}{previewActive && <span className="preview-label">{preview.previewLabel}</span>}{game.onSale ? <Discount>{game.discount}</Discount> : <span className="watch-pill">{game.price === "Preço indisponível" ? "PREÇO INDISPONÍVEL" : game.price === "Consultar preço" ? "CONSULTAR PREÇO" : "SEM PROMOÇÃO"}</span>}</div>
-        <div className="game-info"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><div className="price-row">{game.onSale && <span className="old-price">{game.old}</span>}<strong>{game.price}</strong></div>{!game.onSale && game.price !== "Preço indisponível" && game.price !== "Consultar preço" && <span className="price-status">Preço normal</span>}{historic && <Discount historic>Menor preço histórico</Discount>}</div>
+        <div className="game-art"><GameArtwork src={game.image} steamAppId={game.steamAppId} />{previewActive && <PreviewPlayer preview={preview} title={game.title} />}{previewActive && <span className="preview-label">{preview.previewLabel}</span>}{game.onSale ? <Discount>{game.discount}</Discount> : <span className="watch-pill">{game.price === "Preço indisponível" ? "PREÇO INDISPONÍVEL" : "SEM PROMOÇÃO"}</span>}</div>
+        <div className="game-info"><StoreTag>{game.store}</StoreTag><h3>{game.title}</h3><div className="price-row">{game.onSale && <span className="old-price">{game.old}</span>}<strong>{game.price}</strong></div>{!game.onSale && game.price !== "Preço indisponível" && <span className="price-status">Preço normal</span>}{historic && <Discount historic>Menor preço histórico</Discount>}</div>
       </button>
       {(officialStoreLinks.length > 0 || steamCloudStatus === "supported" || steamCloudStatus === "error" || platformLookupError) && <div className="official-platform-links" aria-label={`Lojas e recursos oficiais de ${game.title}`}>
         {officialStoreLinks.map((platform) => <a key={platform.name} className={`platform-link ${platform.className}`} href={platform.href} target="_blank" rel="noopener noreferrer" aria-label={`Abrir ${game.title} na loja oficial ${platform.name}`} title={`Abrir loja oficial ${platform.name}`}><span className="platform-mark" aria-hidden="true">{platform.symbol}</span>{platform.name}</a>)}
@@ -713,7 +734,7 @@ function FreeGameCard({ game, onBuy }: { game: FreeGame; onBuy: () => void }) {
   }, [game.kind, game.platforms, game.title]);
   const platformDetails = game.platforms.map((platform) => ({
     name: platform,
-    symbol: platform === "Steam" ? "S" : platform === "Epic Games" ? "E" : platform === "Xbox" ? "X" : "PS",
+    symbol: platform === "Steam" ? "S" : platform === "Xbox" ? "X" : "PS",
     className: `free-platform-${platform.toLocaleLowerCase("en").replace(/\s+/g, "-")}`,
     url: officialStoreSearchUrl(platform, game.title),
   }));
@@ -929,10 +950,8 @@ function SearchResults({ query, go, favorites, toggleFavorite, games, loading, e
     };
   }, [query, usdBrl]);
   const activeResults = games.filter((game) => `${game.title} ${game.store}`.toLocaleLowerCase("pt-BR").includes(normalizedQuery));
-  const nintendoResults = searchNintendoCatalog(normalizedQuery);
   const activeNames = new Set(activeResults.map((game) => game.title.toLocaleLowerCase("pt-BR")));
-  const existingNames = new Set([...activeResults, ...catalogGames].map((game) => game.title.toLocaleLowerCase("pt-BR")));
-  const results = [...activeResults, ...catalogGames.filter((game) => !activeNames.has(game.title.toLocaleLowerCase("pt-BR"))), ...nintendoResults.filter((game) => !existingNames.has(game.title.toLocaleLowerCase("pt-BR")))]
+  const results = [...activeResults, ...catalogGames.filter((game) => !activeNames.has(game.title.toLocaleLowerCase("pt-BR")))]
     .filter((game) => category === "Todos" || game.category === category);
   const activeGameCount = new Set(activeResults.map((game) => game.title.toLocaleLowerCase("pt-BR"))).size;
   if (sortOrder === "price-asc") results.sort((a, b) => Number(b.onSale) - Number(a.onSale) || (a.onSale ? a.priceValue - b.priceValue : a.title.localeCompare(b.title)));
@@ -948,9 +967,7 @@ function SearchResults({ query, go, favorites, toggleFavorite, games, loading, e
             : activeGameCount > 0
               ? `Encontramos promoções ativas para ${activeGameCount} jogo${activeGameCount === 1 ? "" : "s"}.`
               : results.length > 0
-                ? nintendoResults.length > 0
-                  ? "Jogos Nintendo do catálogo aparecem junto com resultados de PC. Abra um título Nintendo para consultar o preço oficial em reais."
-                  : "Nenhuma promoção ativa encontrada agora. Os jogos abaixo estão no catálogo e podem ser acompanhados."
+                ? "Nenhuma promoção ativa encontrada agora. Os jogos abaixo estão no catálogo e podem ser acompanhados."
                 : "Busque pelo nome de um jogo para verificar se está em promoção."}</p></div>
         <CatalogControls category={category} onCategoryChange={onCategoryChange} sortOrder={sortOrder} onSortChange={onSortChange} />
         {results.length ? <div className="game-grid">{results.map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite={favorites.includes(game.title)} onFavorite={() => toggleFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} />)}</div> : <div className="empty-list"><h2>{loading || catalogLoading ? "Buscando jogos..." : catalogError ? "Não foi possível buscar os jogos" : error ? "Não foi possível carregar as ofertas" : "Nenhum jogo encontrado"}</h2><p>{catalogError || error || "Tente buscar por outro nome."}</p><Button onClick={() => go("home")}>Voltar às promoções</Button></div>}
@@ -961,13 +978,13 @@ function SearchResults({ query, go, favorites, toggleFavorite, games, loading, e
   );
 }
 
-function FreeGamesPage({ freeGames, loading, error, onBuy }: { freeGames: FreeGame[]; loading: boolean; error: string; onBuy: (url: string) => void }) {
+function FreeGamesPage({ freeGames, loading, error, onBuy, onRetry }: { freeGames: FreeGame[]; loading: boolean; error: string; onBuy: (url: string) => void; onRetry: () => void }) {
   return (
     <main className="catalog-page">
       <div className="container">
         <div className="page-title"><span className="eyebrow">POR TEMPO LIMITADO</span><h1>Jogos grátis</h1><p>Ofertas gratuitas que ainda estão ativas.</p></div>
         <div className="free-grid">{freeGames.map((game) => <FreeGameCard key={game.id} game={game} onBuy={() => onBuy(game.url)} />)}</div>
-        {!freeGames.length && <div className="empty-list"><h2>{loading ? "Carregando jogos grátis..." : error ? "Não foi possível carregar os jogos grátis" : "Nenhum jogo grátis ativo"}</h2><p>{error || "As ofertas gratuitas disponíveis aparecerão aqui."}</p></div>}
+        {!freeGames.length && <div className="empty-list"><h2>{loading ? "Carregando jogos grátis..." : error ? "Não foi possível carregar os jogos grátis" : "Nenhum jogo grátis ativo"}</h2><p>{error || "As ofertas gratuitas disponíveis aparecerão aqui."}</p>{!loading && error && <Button onClick={onRetry}>Tentar novamente</Button>}</div>}
       </div>
       <Footer />
     </main>
@@ -1096,8 +1113,10 @@ function GamePage({
   const [gameHunterOffers, setGameHunterOffers] = useState<GameOffer[]>([]);
   const [gameHunterMatched, setGameHunterMatched] = useState(false);
   const [gameHunterError, setGameHunterError] = useState("");
-  const [platformFilter, setPlatformFilter] = useState<GamePlatform>("PC");
-  const [storeFilter, setStoreFilter] = useState("Todas");
+  const [offersRetryVersion, setOffersRetryVersion] = useState(0);
+  const [platformFilter, setPlatformFilter] = useState<GamePlatform>("Steam");
+  const [generationFilter, setGenerationFilter] = useState("all");
+  const [mediaFilter, setMediaFilter] = useState("all");
   const favorite = favorites.includes(game.title);
   const inCart = cartIds.includes(game.gameId);
 
@@ -1113,19 +1132,16 @@ function GamePage({
     setGameHunterOffers([]);
     setGameHunterMatched(false);
     setGameHunterError("");
-    const isNintendoCatalogGame = game.gameId.startsWith("nintendo:");
-    setPlatformFilter("PC");
-    setStoreFilter("Todas");
+    setOffersRetryVersion(0);
+    setPlatformFilter("Steam");
+    setGenerationFilter("all");
+    setMediaFilter("all");
 
     void Promise.allSettled([
-      isNintendoCatalogGame
-        ? Promise.resolve({ offers: [], historicalLow: null, storeNamesError: "" })
-        : usdBrl === null
+      usdBrl === null
         ? Promise.reject(new Error("A cotação USD/BRL ainda não está disponível para converter ofertas."))
         : fetchGameOffers(game.gameId, usdBrl, controller.signal),
-      isNintendoCatalogGame
-        ? Promise.resolve(null)
-        : fetchSteamGameDetails(game.steamAppId, game.title, controller.signal),
+      fetchSteamGameDetails(game.steamAppId, game.title, controller.signal),
       fetchGameHunterConsoleOffers(game.title, controller.signal),
     ]).then(([offersResult, steamResult, gameHunterResult]) => {
       if (controller.signal.aborted) return;
@@ -1148,33 +1164,47 @@ function GamePage({
     });
 
     return () => controller.abort();
-  }, [game.gameId, game.steamAppId, game.title, usdBrl]);
+  }, [game.gameId, game.steamAppId, game.title, usdBrl, offersRetryVersion]);
 
   const playStationOffers = gameHunterOffers.filter((offer) => /^ps[345]$/i.test(offer.platform ?? ""));
   const xboxOffers = gameHunterOffers.filter((offer) => /^xbox\b/i.test(offer.platform ?? ""));
+  const steamOffers = offers.filter((offer) => offer.store === "Steam");
   const platformOffers = platformFilter === "PlayStation"
     ? playStationOffers
     : platformFilter === "Xbox"
       ? xboxOffers
-      : offers;
-  const filteredOffers = platformFilter === "PC" && storeFilter !== "Todas"
-    ? platformOffers.filter((offer) => offer.store === storeFilter)
-    : platformOffers;
-  const stores = [...new Set(offers.map((offer) => offer.store))];
-  const cheapestOffer = offers[0];
-  const selectedBestOffer = platformFilter === "PC" ? cheapestOffer : platformOffers[0];
-  const comparisonPrice = selectedBestOffer?.price ?? (platformFilter === "PC" && !game.gameId.startsWith("nintendo:") ? game.price : "Preço indisponível");
-  const consoleOfferCounts: Record<Exclude<GamePlatform, "PC">, number> = {
+      : platformFilter === "Steam Cloud"
+        ? steamDetails?.steamCloud ? steamOffers : []
+        : steamOffers;
+  const generationOptions = [...new Set(platformOffers.map((offer) => offer.platform?.trim() || "Não informado"))];
+  const mediaOptions = [...new Set(platformOffers.map((offer) => offer.type?.trim().toLocaleLowerCase("pt-BR") || "unknown"))];
+  const filteredOffers = platformOffers.filter((offer) =>
+    (generationFilter === "all" || (offer.platform?.trim() || "Não informado") === generationFilter) &&
+    (mediaFilter === "all" || (offer.type?.trim().toLocaleLowerCase("pt-BR") || "unknown") === mediaFilter)
+  );
+  const selectedBestOffer = filteredOffers[0];
+  const comparisonPrice = selectedBestOffer?.price ?? (platformFilter === "Steam" || (platformFilter === "Steam Cloud" && steamDetails?.steamCloud) ? game.price : "Preço indisponível");
+  const consoleOfferCounts: Record<"PlayStation" | "Xbox", number> = {
     PlayStation: playStationOffers.length,
     Xbox: xboxOffers.length,
   };
-  const platformTitle = platformFilter === "PC" ? "PC" : platformFilter;
-  const platformSourceNote = platformFilter === "PC"
-    ? "Somente ofertas das lojas oficiais Steam e Epic Games. Preços convertidos em reais; confira o valor final na loja."
-    : "Somente preços atuais das lojas oficiais Xbox Store e PlayStation Store.";
+  const platformTitle = platformFilter;
+  const platformSourceNote = platformFilter === "Steam"
+    ? "Ofertas de jogos na loja Steam, com preços convertidos para reais; confira o valor final na loja."
+    : platformFilter === "Steam Cloud"
+      ? steamDetails?.steamCloud
+        ? "Este jogo oferece suporte a salvamentos Steam Cloud. O preço e a compra são os mesmos da edição Steam."
+        : "Este jogo não oferece suporte a salvamentos Steam Cloud; não há uma oferta separada de jogos em nuvem."
+      : "Preços atuais identificados na API do GameHunter, limitados às lojas oficiais Xbox Store e PlayStation Store.";
   const imagesToShow = steamDetails?.screenshots.slice(0, 6) ?? [];
   const developer = steamDetails?.developers.join(", ");
   const genreNames = steamDetails?.genres ?? [];
+  const formatEdition = (edition: string | undefined) => {
+    const normalizedEdition = edition?.trim();
+    if (!normalizedEdition) return "Edição não informada";
+    if (/^(standard|base|regular)$/i.test(normalizedEdition)) return "Edição padrão";
+    return normalizedEdition.replace(/\b\w/g, (character) => character.toLocaleUpperCase("pt-BR"));
+  };
 
   return (
     <main className="game-page">
@@ -1189,8 +1219,8 @@ function GamePage({
             <h1>{game.title}</h1>
             <p>{steamDetails?.description || `Compare as ofertas disponíveis para ${game.title}. Os valores em reais são estimativas convertidas a partir dos preços informados pela fonte.`}</p>
             <div className="meta">{[...new Set([game.category, ...genreNames])].slice(0, 5).map((genre) => <span key={genre}>{genre}</span>)}{steamDetails?.steamCloud && <span>Steam Cloud</span>}</div>
-            <div className="detail-price"><div><small>{selectedBestOffer ? `Preço na ${selectedBestOffer.store}` : platformFilter === "PC" ? "Preço informado" : "Preço indisponível"}</small><strong>{comparisonPrice}</strong></div>{selectedBestOffer?.discount && <Discount>{selectedBestOffer.discount}</Discount>}</div>
-            <p className="detail-data-note">{platformFilter === "PC" ? offers.length ? `${offers.length} ofertas encontradas na Steam e Epic Games; preços convertidos em reais.` : "Nenhuma oferta atual encontrada na Steam ou Epic Games." : `${platformOffers.length} preços oficiais atuais encontrados na ${platformFilter === "Xbox" ? "Xbox Store" : "PlayStation Store"}.`}</p>
+            <div className="detail-price"><div><small>{selectedBestOffer ? `Preço na ${selectedBestOffer.store}` : platformFilter === "Steam" || platformFilter === "Steam Cloud" ? "Preço na Steam" : "Preço indisponível"}</small><strong>{comparisonPrice}</strong></div>{selectedBestOffer?.discount && <Discount>{selectedBestOffer.discount}</Discount>}</div>
+            <p className="detail-data-note">{platformFilter === "Steam Cloud" ? steamDetails?.steamCloud ? "Suporte de salvamento em nuvem confirmado pela Steam; a compra é feita pela loja Steam." : "Este jogo não apresenta suporte a Steam Cloud nos dados da loja." : platformFilter === "Steam" ? steamOffers.length ? `${steamOffers.length} ofertas de jogos encontradas na Steam; preços convertidos em reais.` : "Nenhuma oferta atual encontrada na Steam." : `${platformOffers.length} preços atuais encontrados na loja oficial ${platformFilter === "Xbox" ? "Xbox Store" : "PlayStation Store"}.`}</p>
             <div className="overview-actions">
               <Button onClick={() => onAlert(game)}><Icon name="bell" />Criar alerta de preço</Button>
               <Button variant="secondary" className={favorite ? "wishlist-active" : ""} onClick={() => onFavorite(game.title)}><Icon name="heart" />{favorite ? "Na lista de desejos" : "Salvar jogo"}</Button>
@@ -1209,39 +1239,55 @@ function GamePage({
             <SectionHeader eyebrow="COMPARE E ECONOMIZE" title={`Ofertas ${platformTitle} · ${game.title}`} />
             <p className="offer-source-note">{platformSourceNote}{steamDetails?.steamCloud ? " Steam Cloud é um recurso de salvamento na nuvem, não uma loja." : ""}</p>
             <div className="platform-filters" role="group" aria-label="Filtrar ofertas por plataforma">
-              {(["PC", "PlayStation", "Xbox"] as const).map((platform) => (
-                <button className={platformFilter === platform ? "active" : ""} key={platform} onClick={() => { setPlatformFilter(platform); setStoreFilter("Todas"); }}>
-                  {platform}{platform === "PC" ? ` (${offers.length})` : consoleOfferCounts[platform]}
+              {(["Xbox", "PlayStation", "Steam Cloud", "Steam"] as const).map((platform) => (
+                <button className={platformFilter === platform ? "active" : ""} key={platform} onClick={() => { setPlatformFilter(platform); setGenerationFilter("all"); setMediaFilter("all"); }}>
+                  {platform}{platform === "Steam" ? ` (${steamOffers.length})` : platform === "Steam Cloud" ? steamDetails?.steamCloud ? " (suportado)" : offersLoading ? " (verificando)" : " (não suportado)" : ` (${consoleOfferCounts[platform]})`}
                 </button>
               ))}
             </div>
-            {platformFilter === "PC" ? <label className="offer-filter">Loja
-              <select value={storeFilter} onChange={(event) => setStoreFilter(event.target.value)} aria-label="Filtrar ofertas por loja">
-                <option value="Todas">Todas as lojas ({offers.length})</option>
-                {stores.map((store) => <option key={store} value={store}>{store}</option>)}
-              </select>
-            </label> : <p className="offer-source-note">Preços em BRL; a loja, a plataforma exata e o tipo de mídia aparecem em cada oferta.</p>}
+            {(platformFilter === "Xbox" || platformFilter === "PlayStation") && platformOffers.length > 0 && <div className="offer-detail-filters">
+              <label>Geração/console<select value={generationFilter} onChange={(event) => setGenerationFilter(event.target.value)}><option value="all">Todas as gerações</option>{generationOptions.map((generation) => <option key={generation} value={generation}>{generation}</option>)}</select></label>
+              <label>Tipo de mídia<select value={mediaFilter} onChange={(event) => setMediaFilter(event.target.value)}><option value="all">Todos os tipos</option>{mediaOptions.map((media) => <option key={media} value={media}>{media === "unknown" ? "Não informado" : media === "physical" ? "Física" : media === "digital" ? "Digital" : media}</option>)}</select></label>
+            </div>}
+            <p className="offer-source-note">{platformFilter === "Steam Cloud" ? "Steam Cloud sincroniza salvamentos; não é uma modalidade separada de compra." : platformFilter === "Steam" ? "Oferta digital comprada diretamente na Steam." : "Compare preço, plataforma, edição e tipo de mídia; dados ausentes são identificados sem estimativa."}</p>
             {offersLoading && <p className="sync-warning">Buscando ofertas atuais...</p>}
-            {offersError && <p className="sync-warning">{offersError}</p>}
+            {offersError && <p className="sync-warning">{offersError}<button className="text-link" onClick={() => setOffersRetryVersion((version) => version + 1)}>Tentar novamente</button></p>}
             {storeNamesError && <p className="sync-warning">{storeNamesError}</p>}
-            {platformFilter !== "PC" && gameHunterError && <p className="sync-warning">{gameHunterError}</p>}
+            {(platformFilter === "PlayStation" || platformFilter === "Xbox") && gameHunterError && <p className="sync-warning">{gameHunterError}</p>}
             <div className="store-list">
               {filteredOffers.map((offer, index) => (
                 <div className="store-row" key={`${offer.id}-${offer.store}`}>
-                  <div className="store-brand"><span>{offer.store.charAt(0)}</span><div><strong>{offer.store}</strong>{offer.platform && <small>{offer.platform}{offer.type ? ` · ${offer.type === "physical" ? "Mídia física" : "Digital"}` : ""}</small>}{index === 0 && storeFilter === "Todas" && <small>Menor preço encontrado</small>}</div></div>
-                  {offer.discount ? <Discount>{offer.discount}</Discount> : <span className="offer-normal-label">Preço atual</span>}
-                  <div className="store-price-group">{offer.normalPrice && <small>{offer.normalPrice}</small>}<strong className="store-price">{offer.price}</strong></div>
+                  <div className="store-brand">
+                    <span>{offer.store.charAt(0)}</span>
+                    <div className="store-brand-info">
+                      <strong>{offer.store}</strong>
+                      <div className="offer-specs">
+                        <span>{offer.platform || (offer.store === "Steam" ? "PC" : "Plataforma não informada")}</span>
+                        <span>{formatEdition(offer.edition)}</span>
+                        <span>{offer.type === "physical" ? "Mídia física" : offer.type === "digital" || offer.store === "Steam" ? "Digital" : "Mídia não informada"}</span>
+                      </div>
+                      {index === 0 && <small className="offer-best-price">Menor preço nesta plataforma</small>}
+                    </div>
+                  </div>
+                  {offer.discount ? <Discount>{offer.discount}</Discount> : <span className="offer-normal-label">Sem desconto</span>}
+                  <div className="store-price-group">
+                    <div className="offer-price-detail"><span>Preço original</span><strong className={offer.normalPrice && offer.normalPrice !== offer.price ? "offer-original-price" : ""}>{offer.normalPrice || "Não informado"}</strong></div>
+                    <div className="offer-price-detail"><span>Preço atual</span><strong className="store-price">{offer.price}</strong></div>
+                  </div>
+                  <small className="offer-checked-at">{formatCheckedAt(offer.checkedAt)}</small>
                   <Button variant="outline" onClick={() => onBuy(offer.url)}>Ver oferta <Icon name="arrow" /></Button>
                 </div>
               ))}
+              {!offersLoading && platformOffers.length > 0 && filteredOffers.length === 0 && <p className="platform-unavailable">Nenhuma oferta corresponde aos filtros selecionados.</p>}
             </div>
-            {platformFilter !== "PC" && !offersLoading && !gameHunterError && platformOffers.length === 0 && <p className="platform-unavailable">{gameHunterMatched ? `Nenhuma oferta oficial atual da ${platformFilter === "Xbox" ? "Xbox Store" : "PlayStation Store"} encontrada para este jogo.` : `Não encontramos uma correspondência exata para este jogo no catálogo de preços do GameHunter.`}</p>}
-            {platformFilter === "PC" && !offersLoading && !offersError && filteredOffers.length === 0 && <p className="sync-warning">{offers.length ? "Não há ofertas desta loja para o jogo." : "Nenhuma oferta ativa foi encontrada na Steam ou Epic Games."}</p>}
+            {(platformFilter === "PlayStation" || platformFilter === "Xbox") && !offersLoading && !gameHunterError && platformOffers.length === 0 && <p className="platform-unavailable">{gameHunterMatched ? `Nenhuma oferta oficial atual da ${platformFilter === "Xbox" ? "Xbox Store" : "PlayStation Store"} encontrada para este jogo.` : `Não encontramos uma correspondência exata para este jogo no catálogo de preços do GameHunter.`}</p>}
+            {platformFilter === "Steam Cloud" && !steamDetails?.steamCloud && !offersLoading && <p className="platform-unavailable">Steam Cloud é um recurso de sincronização de salvamentos e não oferece uma loja de jogos ou um preço separado.</p>}
+            {platformFilter === "Steam" && !offersLoading && !offersError && filteredOffers.length === 0 && <p className="sync-warning">{offers.length ? "Nenhuma oferta Steam disponível para este jogo." : "Nenhuma oferta ativa foi encontrada na Steam."}</p>}
           </section>
           <section className="chart-panel">
             <SectionHeader eyebrow="DADOS DISPONÍVEIS" title="Histórico de preço" />
-            {platformFilter !== "PC" ? <p className="sync-warning">O GameHunter não disponibiliza histórico de preços por console nesta integração.</p> : historicalLow ? <div className="history-low"><span>Menor preço registrado pela fonte</span><strong>{historicalLow.price}</strong><small>{historicalLow.date ? new Date(historicalLow.date * 1000).toLocaleDateString("pt-BR") : "Data indisponível"}</small></div> : <p className="sync-warning">A fonte atual não disponibiliza uma série histórica completa para este jogo.</p>}
-            {platformFilter === "PC" && <p className="offer-source-note">O menor preço registrado pode ser uma conversão estimada e não confirma disponibilidade atual.</p>}
+            {platformFilter === "Xbox" || platformFilter === "PlayStation" ? <p className="sync-warning">O GameHunter não disponibiliza histórico de preços por console nesta integração.</p> : historicalLow ? <div className="history-low"><span>Menor preço registrado pela fonte</span><strong>{historicalLow.price}</strong><small>{historicalLow.date ? new Date(historicalLow.date * 1000).toLocaleDateString("pt-BR") : "Data indisponível"}</small></div> : <p className="sync-warning">A fonte atual não disponibiliza uma série histórica completa para este jogo.</p>}
+            {(platformFilter === "Steam" || platformFilter === "Steam Cloud") && <p className="offer-source-note">O menor preço registrado pode ser uma conversão estimada e não confirma disponibilidade atual.</p>}
             {steamDetails?.releaseDate && <p className="detail-fact"><span>Lançamento</span><strong>{steamDetails.releaseDate}</strong></p>}
             {steamDetails?.publishers.length ? <p className="detail-fact"><span>Publicadora</span><strong>{steamDetails.publishers.join(", ")}</strong></p> : null}
           </section>
@@ -1255,18 +1301,19 @@ function GamePage({
 }
 
 function WishlistPage({ favorites, toggleFavorite, go, games, onVisit, cartIds, toggleCart }: { favorites: string[]; toggleFavorite: (title: string) => void; go: (page: Page) => void; games: PromoGame[]; onVisit: (game: PromoGame) => void; cartIds: string[]; toggleCart: (game: PromoGame) => void }) {
+  const [sortBy, setSortBy] = useState<"popular" | "price-asc" | "discount">("popular");
   const savedTitles = [...new Set(favorites.map((title) => title.trim()).filter(Boolean))];
   const favoriteGames = games.filter((game, index, currentGames) =>
     savedTitles.some((title) => title.toLocaleLowerCase("pt-BR") === game.title.toLocaleLowerCase("pt-BR")) &&
     currentGames.findIndex((candidate) => candidate.title.toLocaleLowerCase("pt-BR") === game.title.toLocaleLowerCase("pt-BR")) === index
-  );
+  ).sort((a, b) => sortBy === "price-asc" ? a.priceValue - b.priceValue : sortBy === "discount" ? (parseFloat(b.discount) || 0) - (parseFloat(a.discount) || 0) : b.popularity - a.popularity);
   const waitingGames = savedTitles.filter((title) => !favoriteGames.some((game) => game.title.toLocaleLowerCase("pt-BR") === title.toLocaleLowerCase("pt-BR")));
   return (
     <main className="wishlist-page">
       <div className="container">
         <div className="page-title"><span className="title-icon wishlist-title-icon"><Icon name="heart" /></span><div><span className="eyebrow">SEUS JOGOS FAVORITOS</span><h1>Minha Lista</h1><p>Acompanhe os preços dos jogos que você quer jogar.</p></div></div>
         {savedTitles.length ? (
-          <><div className="list-summary"><span>{savedTitles.length} {savedTitles.length === 1 ? "jogo salvo" : "jogos salvos"}</span><span>Você receberá um aviso quando um jogo salvo entrar em promoção.</span></div><div className="game-grid wishlist-grid">{favoriteGames.map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite onFavorite={() => toggleFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} removable />)}</div>{waitingGames.length > 0 && <div className="watching-list"><h2>Aguardando promoção</h2>{waitingGames.map((title) => <div key={title}><span><Icon name="bell" />{title}</span><span>Você será avisado quando aparecer uma oferta ativa.</span><button onClick={() => toggleFavorite(title)}>Remover</button></div>)}</div>}</>
+          <><div className="list-summary"><span>{savedTitles.length} {savedTitles.length === 1 ? "jogo salvo" : "jogos salvos"}</span><span>Lista consultada a cada 5 minutos enquanto o site está aberto.</span></div>{favoriteGames.length > 1 && <label className="wishlist-sort">Ordenar ofertas<select value={sortBy} onChange={(event) => setSortBy(event.target.value === "price-asc" ? "price-asc" : event.target.value === "discount" ? "discount" : "popular")}><option value="popular">Mais populares</option><option value="price-asc">Menor preço</option><option value="discount">Maior desconto</option></select></label>}{favoriteGames.length > 0 ? <><h2 className="wishlist-section-heading">Em promoção</h2><div className="game-grid wishlist-grid">{favoriteGames.map((game) => <GameCard key={game.id} game={game} onClick={() => onVisit(game)} favorite onFavorite={() => toggleFavorite(game.title)} inCart={cartIds.includes(game.gameId)} onCart={() => toggleCart(game)} removable />)}</div></> : null}{waitingGames.length > 0 && <div className="watching-list"><h2>Aguardando promoção <span>{waitingGames.length}</span></h2>{waitingGames.map((title) => <div key={title}><span className="watching-title"><Icon name="bell" />{title}</span><span className="watching-status">Sem oferta ativa no momento</span><button aria-label={`Remover ${title} da lista de desejos`} onClick={() => toggleFavorite(title)}>Remover</button></div>)}</div>}</>
         ) : (
           <div className="empty-list" aria-live="polite"><span><Icon name="heart" size={32} /></span><h2>Nenhum jogo salvo</h2><p>Favorite jogos para acompanhar preços e descontos em um só lugar.</p><Button onClick={() => go("home")}>Explorar promoções <Icon name="arrow" /></Button></div>
         )}
@@ -1293,10 +1340,11 @@ function Toggle({ active, setActive, label = "Ativar" }: { active: boolean; setA
   return <button className={active ? "toggle active" : "toggle"} onClick={() => setActive(!active)} aria-label={label} aria-pressed={active}><span /></button>;
 }
 
-function AlertsPage({ alerts, onCreate, onDelete, games, favorites, notificationsEnabled, notificationMessage, onNotificationsToggle }: { alerts: PriceAlert[]; onCreate: (title: string, target: string) => void; onDelete: (id: string) => void; games: PromoGame[]; favorites: string[]; notificationsEnabled: boolean; notificationMessage: string; onNotificationsToggle: (value: boolean) => void }) {
+function AlertsPage({ alerts, onCreate, onDelete, onToggle, games, favorites, consoleOffers, notificationsEnabled, notificationMessage, onNotificationsToggle }: { alerts: PriceAlert[]; onCreate: (title: string, target: string, platform: AlertPlatform) => void; onDelete: (id: string) => void; onToggle: (id: string) => void; games: PromoGame[]; favorites: string[]; consoleOffers: Record<string, { offer?: GameOffer; checkedAt: string; error?: string }>; notificationsEnabled: boolean; notificationMessage: string; onNotificationsToggle: (value: boolean) => void }) {
   const [alertMenu, setAlertMenu] = useState<string | null>(null);
   const [gameTitle, setGameTitle] = useState("");
   const [targetPrice, setTargetPrice] = useState("60,00");
+  const [platform, setPlatform] = useState<AlertPlatform>("Steam");
   useEffect(() => {
     if (!gameTitle && (games.length || favorites.length)) setGameTitle(games[0]?.title ?? favorites[0]);
   }, [gameTitle, games, favorites]);
@@ -1308,8 +1356,16 @@ function AlertsPage({ alerts, onCreate, onDelete, games, favorites, notification
           <SectionHeader title="Alertas ativos" />
           <div className="alert-cards">
             {alerts.map((alert) => {
-              const game = games.find((item) => item.title === alert.title);
-              return <div className="alert-card" key={alert.id}><img src={game?.image ?? images.digital} alt="" /><div className="alert-main">{game && <StoreTag>{game.store}</StoreTag>}<h3>{game?.title ?? alert.title}</h3><div className="target"><span>Preço-alvo<strong>R$ {alert.target}</strong></span><Icon name="arrow" /><span>Preço atual<strong>{game?.price ?? "Oferta encerrada"}</strong></span></div></div><div className="alert-status"><span><i />{game ? "ATIVO" : "AGUARDANDO"}</span><button aria-label={`Opções do alerta de ${alert.title}`} aria-expanded={alertMenu === alert.id} onClick={() => setAlertMenu(alertMenu === alert.id ? null : alert.id)}>•••</button>{alertMenu === alert.id && <div className="alert-menu"><button className="danger" onClick={() => { onDelete(alert.id); setAlertMenu(null); }}><Icon name="trash" />Excluir alerta</button></div>}</div></div>;
+              const game = alert.platform === "Steam" ? games.find((item) => item.title.toLocaleLowerCase("pt-BR") === alert.title.toLocaleLowerCase("pt-BR")) : undefined;
+              const consoleResult = alert.platform === "Steam" ? undefined : consoleOffers[`${alert.platform}:${alert.title}`];
+              const currentPrice = alert.platform === "Steam" ? game?.price : consoleResult?.offer?.price;
+              const currentPriceValue = alert.platform === "Steam" ? game?.priceValue : consoleResult?.offer?.priceValue;
+              const target = parseTargetPrice(alert.target);
+              const status = !alert.enabled ? "PAUSADO"
+                : consoleResult?.error ? "ERRO AO CONSULTAR"
+                  : Number.isFinite(currentPriceValue) && currentPriceValue! <= target ? "PREÇO ATINGIDO"
+                    : currentPrice ? "MONITORANDO" : "AGUARDANDO OFERTA";
+              return <div className="alert-card" key={alert.id}><img src={game?.image ?? images.digital} alt="" /><div className="alert-main"><StoreTag>{alert.platform}</StoreTag><h3>{alert.title}</h3><div className="target"><span>Preço-alvo<strong>R$ {alert.target}</strong></span><Icon name="arrow" /><span>Preço atual<strong>{currentPrice ?? "Sem oferta ativa"}</strong></span></div><small className="alert-check-time">{consoleResult ? consoleResult.error ? "Falha na consulta. Tentaremos novamente." : formatCheckedAt(consoleResult.checkedAt) : alert.platform === "Steam" ? "Verificação automática a cada 5 minutos, enquanto o site está aberto." : ""}</small></div><div className="alert-status"><span className={alert.enabled ? "" : "paused"}><i />{status}</span><button aria-label={`Opções do alerta de ${alert.title}`} aria-expanded={alertMenu === alert.id} onClick={() => setAlertMenu(alertMenu === alert.id ? null : alert.id)}>•••</button>{alertMenu === alert.id && <div className="alert-menu"><button onClick={() => { onToggle(alert.id); setAlertMenu(null); }}><Icon name="bell" />{alert.enabled ? "Pausar alerta" : "Retomar alerta"}</button><button className="danger" onClick={() => { onDelete(alert.id); setAlertMenu(null); }}><Icon name="trash" />Excluir alerta</button></div>}</div></div>;
             })}
             {!alerts.length && <div className="empty-list"><h2>Você ainda não tem alertas</h2><p>Escolha um jogo e defina o preço que gostaria de pagar.</p></div>}
           </div>
@@ -1319,10 +1375,11 @@ function AlertsPage({ alerts, onCreate, onDelete, games, favorites, notification
           <section className="form-card">
             <div className="form-head"><span><Icon name="plus" /></span><div><h2>Criar novo alerta</h2><p>Você será avisado assim que o preço chegar lá.</p></div></div>
             <label>Jogo<div className="input"><Icon name="search" /><select disabled={!games.length && !favorites.length} value={gameTitle} onChange={(event) => setGameTitle(event.target.value)} aria-label="Jogo para o alerta">{games.map((game) => <option key={game.id} value={game.title}>{game.title}</option>)}{favorites.filter((title) => !games.some((game) => game.title === title)).map((title) => <option key={title} value={title}>{title} (salvo)</option>)}</select></div></label>
+            <label>Plataforma<div className="input"><select value={platform} onChange={(event) => setPlatform(event.target.value as AlertPlatform)} aria-label="Plataforma monitorada"><option>Steam</option><option>Xbox</option><option>PlayStation</option></select></div></label>
             <label>Preço-alvo<div className="input prefix"><span>R$</span><input inputMode="decimal" value={targetPrice} onChange={(event) => setTargetPrice(event.target.value)} aria-label="Preço-alvo em reais" /></div></label>
-            <fieldset><legend>Lojas monitoradas</legend><p className="notification-note">Alertas automáticos consultam Steam e Epic Games; disponibilidade oficial de Xbox e PlayStation é consultada na página de cada jogo.</p></fieldset>
+            <fieldset><legend>Como funciona</legend><p className="notification-note">O GamePing consulta a plataforma escolhida a cada 5 minutos enquanto o site está aberto. Os preços são estimativas e devem ser confirmados na loja.</p></fieldset>
             <fieldset><legend>Notificações neste dispositivo</legend><div className="channel-list"><div><span><Icon name="bell" />Avisos de promoções</span><Toggle active={notificationsEnabled} setActive={onNotificationsToggle} label="Ativar ou desativar notificações" /></div></div><p className="notification-note">{notificationMessage || "Os avisos aparecem enquanto o site está aberto e a permissão do navegador está liberada."}</p></fieldset>
-            <Button className="full" onClick={() => { if (gameTitle) onCreate(gameTitle, targetPrice); }}><Icon name="bell" />Criar alerta</Button>
+            <Button className="full" disabled={!gameTitle || !Number.isFinite(parseTargetPrice(targetPrice)) || parseTargetPrice(targetPrice) < 0} onClick={() => onCreate(gameTitle, targetPrice, platform)}><Icon name="bell" />Criar alerta</Button>
           </section>
 
           <section className="history-card">
@@ -1336,9 +1393,10 @@ function AlertsPage({ alerts, onCreate, onDelete, games, favorites, notification
   );
 }
 
-function Modal({ type, close, onSuccess, onLogin, alertGame }: { type: "login" | "alert"; close: () => void; onSuccess: (title: string, target: string) => void; onLogin: (email: string) => void; alertGame: PromoGame | null }) {
+function Modal({ type, close, onSuccess, onLogin, alertGame }: { type: "login" | "alert"; close: () => void; onSuccess: (title: string, target: string, platform: AlertPlatform) => void; onLogin: (email: string) => void; alertGame: PromoGame | null }) {
   const [email, setEmail] = useState("");
   const [targetPrice, setTargetPrice] = useState("60,00");
+  const [platform, setPlatform] = useState<AlertPlatform>("Steam");
   useEffect(() => {
     if (alertGame && Number.isFinite(alertGame.priceValue)) {
       setTargetPrice(new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(alertGame.priceValue));
@@ -1354,9 +1412,10 @@ function Modal({ type, close, onSuccess, onLogin, alertGame }: { type: "login" |
           <small>Login de demonstração local. Não é uma conta real e não sincroniza entre dispositivos.</small>
         </> : <>
           <span className="modal-logo"><Icon name="bell" /></span><h2>Criar alerta de preço</h2><p>Defina o preço que você gostaria de pagar por {alertGame?.title ?? "este jogo"}.</p>
+          <label>Plataforma<div className="input"><select value={platform} onChange={(event) => setPlatform(event.target.value === "Xbox" ? "Xbox" : event.target.value === "PlayStation" ? "PlayStation" : "Steam")} aria-label="Plataforma monitorada"><option>Steam</option><option>Xbox</option><option>PlayStation</option></select></div></label>
           <label>Preço-alvo<div className="input prefix"><span>R$</span><input inputMode="decimal" value={targetPrice} onChange={(event) => setTargetPrice(event.target.value)} autoFocus /></div></label>
           {alertGame && <div className="modal-summary"><img src={alertGame.image} alt="" /><div><strong>{alertGame.title}</strong><span>Preço atual: {alertGame.price}</span></div></div>}
-          <Button className="full" onClick={() => { if (alertGame) onSuccess(alertGame.title, targetPrice); }}><Icon name="bell" />Criar alerta</Button>
+          <Button className="full" disabled={!alertGame || !Number.isFinite(parseTargetPrice(targetPrice)) || parseTargetPrice(targetPrice) < 0} onClick={() => { if (alertGame) onSuccess(alertGame.title, targetPrice, platform); }}><Icon name="bell" />Criar alerta</Button>
         </>}
       </div>
     </div>
@@ -1458,6 +1517,7 @@ export default function App() {
   const [usdBrlStale, setUsdBrlStale] = useState(false);
   const [favorites, setFavorites] = useState<string[]>(readSavedFavorites);
   const [alerts, setAlerts] = useState<PriceAlert[]>(readSavedAlerts);
+  const [consoleAlertOffers, setConsoleAlertOffers] = useState<Record<string, { offer?: GameOffer; checkedAt: string; error?: string }>>({});
   const [cart, setCart] = useState<SavedCartItem[]>(() => readSaved<SavedCartItem[]>("gameping:cart", []).map(normalizeSavedCartItem));
   const [storeVisits, setStoreVisits] = useState<Record<string, number>>(() => readSaved("gameping:store-visits", {}));
   const [gameVisits, setGameVisits] = useState<Record<string, number>>(() => readSaved("gameping:game-visits", {}));
@@ -1524,8 +1584,8 @@ export default function App() {
     }
   };
   const alertSuccess = () => { setModal(null); setAlertGame(null); setToast(true); window.setTimeout(() => setToast(false), 3500); };
-  const createAlert = (title: string, target: string) => {
-    setAlerts((current) => [{ id: `alert-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title, target: target.trim() || "60,00" }, ...current]);
+  const createAlert = (title: string, target: string, platform: AlertPlatform) => {
+    setAlerts((current) => [{ id: `alert-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title, target: target.trim(), platform, enabled: true }, ...current]);
     setFavorites((current) => current.includes(title) ? current : [...current, title]);
     alertSuccess();
   };
@@ -1592,6 +1652,45 @@ export default function App() {
     }
   }, []);
   useEffect(() => {
+    const targets = [...new Map(
+      alerts
+        .filter((alert) => alert.enabled && alert.platform !== "Steam")
+        .map((alert) => [`${alert.platform}:${alert.title}`, { platform: alert.platform, title: alert.title }]),
+    ).values()];
+    if (!targets.length) {
+      setConsoleAlertOffers({});
+      return;
+    }
+    let cancelled = false;
+    let controller: AbortController | undefined;
+    const checkConsoleAlerts = async () => {
+      controller?.abort();
+      const requestController = new AbortController();
+      controller = requestController;
+      const checkedAt = new Date().toISOString();
+      const results = await Promise.all(targets.map(async ({ platform, title }) => {
+        try {
+          const { offers } = await fetchGameHunterConsoleOffers(title, requestController.signal);
+          const offer = offers.find((item) => platform === "Xbox"
+            ? /^xbox\b/i.test(item.platform ?? "")
+            : /^ps[345]$/i.test(item.platform ?? ""));
+          return [`${platform}:${title}`, { offer, checkedAt }] as const;
+        } catch (error) {
+          if (requestController.signal.aborted) return null;
+          return [`${platform}:${title}`, { checkedAt, error: String(error) }] as const;
+        }
+      }));
+      if (!cancelled) setConsoleAlertOffers(Object.fromEntries(results.filter((result): result is NonNullable<typeof result> => result !== null)));
+    };
+    void checkConsoleAlerts();
+    const interval = window.setInterval(() => void checkConsoleAlerts(), 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      window.clearInterval(interval);
+    };
+  }, [alerts]);
+  useEffect(() => {
     if (!notificationsEnabled || !("Notification" in window) || window.Notification.permission !== "granted") return;
     const notified = readSaved<Record<string, string>>("gameping:notified-deals", {});
     const sendNotification = (key: string, game: PromoGame, message: string) => {
@@ -1604,15 +1703,27 @@ export default function App() {
       const game = games.find((item) => item.title.toLocaleLowerCase("pt-BR") === title.toLocaleLowerCase("pt-BR"));
       if (game) sendNotification(`saved:${title}`, game, "O jogo da sua lista está em oferta.");
     });
-    alerts.forEach((alert) => {
+    alerts.filter((alert) => alert.enabled && alert.platform === "Steam").forEach((alert) => {
       const game = games.find((item) => item.title.toLocaleLowerCase("pt-BR") === alert.title.toLocaleLowerCase("pt-BR"));
-      const target = Number(alert.target.replace(/\./g, "").replace(",", "."));
+      const target = parseTargetPrice(alert.target);
       if (game && Number.isFinite(target) && game.priceValue <= target) {
         sendNotification(`alert:${alert.id}`, game, "O preço chegou ao valor que você definiu.");
       }
     });
+    alerts.filter((alert) => alert.enabled && alert.platform !== "Steam").forEach((alert) => {
+      const result = consoleAlertOffers[`${alert.platform}:${alert.title}`];
+      const target = parseTargetPrice(alert.target);
+      if (!result?.offer || !Number.isFinite(target) || result.offer.priceValue > target) return;
+      const signature = `${result.offer.id}:${result.offer.priceValue}`;
+      if (notified[`alert:${alert.id}`] === signature) return;
+      const notification = new window.Notification("GamePing: preço desejado encontrado", {
+        body: `${alert.title} por ${result.offer.price} na ${result.offer.store}. O preço chegou ao valor que você definiu.`,
+      });
+      notification.onclick = () => { window.open(result.offer!.url, "_blank", "noopener,noreferrer"); notification.close(); };
+      notified[`alert:${alert.id}`] = signature;
+    });
     window.localStorage.setItem("gameping:notified-deals", JSON.stringify(notified));
-  }, [alerts, favorites, games, notificationsEnabled]);
+  }, [alerts, consoleAlertOffers, favorites, games, notificationsEnabled]);
   useEffect(() => { document.body.style.overflow = modal ? "hidden" : ""; }, [modal]);
   useEffect(() => {
     const root = document.querySelector(".app");
@@ -1651,10 +1762,10 @@ export default function App() {
       <div className="site-background-shade" aria-hidden="true" />
       <Header page={page} go={go} onProfile={() => go("profile")} query={query} onSearch={setQuery} games={games} usdBrl={usdBrl} cartCount={cart.length} accountEmail={accountEmail} />
       {query.trim() ? <SearchResults query={query} go={go} favorites={favorites} toggleFavorite={guardedFavorite} games={games} loading={loading} error={dealsError} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} /> : page === "home" && <Home go={go} favorites={favorites} games={games} freeGames={freeGames} loading={loading} error={[dealsError, freeGamesError].filter(Boolean).join(" ")} lastUpdated={lastUpdated} onRefresh={() => setRefreshVersion((version) => version + 1)} recommendations={recommendations} onVisit={visitGame} onBuy={guardedBuy} onFavorite={guardedFavorite} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} usdBrlUpdatedAt={usdBrlUpdatedAt} usdBrlStale={usdBrlStale} personalized={Object.values(gameVisits).some((count) => count > 0)} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} onViewMore={viewCollection} />}
-      {!query.trim() && page === "free" && <FreeGamesPage freeGames={freeGames} loading={loading} error={freeGamesError} onBuy={guardedBuy} />}
+      {!query.trim() && page === "free" && <FreeGamesPage freeGames={freeGames} loading={loading} error={freeGamesError} onBuy={guardedBuy} onRetry={() => setRefreshVersion((version) => version + 1)} />}
       {!query.trim() && page === "new" && <NewReleasesPage favorites={favorites} toggleFavorite={guardedFavorite} games={games} loading={loading} error={dealsError} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} />}
       {!query.trim() && page === "game" && selectedGame && <GamePage game={selectedGame} games={games} usdBrl={usdBrl} favorites={favorites} cartIds={cart.map((item) => item.gameId)} onBack={() => go("home")} onAlert={guardedAlert} onBuy={guardedBuy} onFavorite={guardedFavorite} onCart={guardedCart} onVisit={visitGame} />}
-      {!query.trim() && page === "alerts" && <AlertsPage alerts={alerts} onCreate={(title, target) => requireLogin(() => createAlert(title, target))} onDelete={(id) => setAlerts((current) => current.filter((alert) => alert.id !== id))} games={games} favorites={favorites} notificationsEnabled={notificationsEnabled} notificationMessage={notificationMessage} onNotificationsToggle={(value) => void toggleNotifications(value)} />}
+      {!query.trim() && page === "alerts" && <AlertsPage alerts={alerts} onCreate={(title, target, platform) => requireLogin(() => createAlert(title, target, platform))} onDelete={(id) => setAlerts((current) => current.filter((alert) => alert.id !== id))} onToggle={(id) => setAlerts((current) => current.map((alert) => alert.id === id ? { ...alert, enabled: !alert.enabled } : alert))} games={games} favorites={favorites} consoleOffers={consoleAlertOffers} notificationsEnabled={notificationsEnabled} notificationMessage={notificationMessage} onNotificationsToggle={(value) => void toggleNotifications(value)} />}
       {!query.trim() && page === "wishlist" && <WishlistPage favorites={favorites} toggleFavorite={guardedFavorite} go={go} games={games} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} />}
       {!query.trim() && page === "cart" && <CartPage cart={cart} games={games} removeFromCart={(gameId) => setCart((current) => current.filter((item) => item.gameId !== gameId))} onBuy={guardedBuy} />}
       {!query.trim() && page === "collection" && <CollectionPage collection={collectionKey} games={games} recommendations={recommendations} freeGames={freeGames} favorites={favorites} cartIds={cart.map((item) => item.gameId)} category={category} sortOrder={sortOrder} loading={loading} error={[dealsError, freeGamesError].filter(Boolean).join(" ")} onBack={() => go("home")} onVisit={visitGame} onBuy={guardedBuy} onFavorite={guardedFavorite} toggleCart={guardedCart} />}

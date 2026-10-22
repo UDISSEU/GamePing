@@ -1,5 +1,3 @@
-import { nintendoProductsByTitle } from "./nintendoCatalog";
-
 export type PromoGame = {
   id: string;
   title: string;
@@ -105,6 +103,8 @@ export type GameOffer = {
   url: string;
   platform?: string;
   type?: string;
+  edition?: string;
+  checkedAt?: string;
 };
 
 type GameHunterSearchResponse = {
@@ -121,6 +121,7 @@ type GameHunterGameResponse = {
     product_id?: number;
     price?: number;
     original_price?: number | null;
+    edition?: string | null;
     discount_pct?: number | null;
     in_stock?: number;
     stock_status?: string;
@@ -128,6 +129,8 @@ type GameHunterGameResponse = {
     store_name?: string;
     platform?: string;
     type?: string;
+    last_checked_at?: string;
+    scraped_at?: string;
     affiliate_url?: string | null;
     product_url?: string | null;
   }[];
@@ -143,23 +146,15 @@ export type SteamGameDetails = {
   screenshots: string[];
 };
 
-export type NintendoOfferLookup = {
-  mapped: boolean;
-  offer: GameOffer | null;
-};
-
 export function officialStoreSearchUrl(store: string, title: string) {
   const cleanTitle = title
-    .replace(/\s*\((?:Steam|Epic Games?)\)\s*(?:Key\s*)?Giveaway\s*$/i, "")
+    .replace(/\s*\(Steam\)\s*(?:Key\s*)?Giveaway\s*$/i, "")
     .replace(/\s+(?:Key\s*)?Giveaway\s*$/i, "")
     .trim();
   const query = encodeURIComponent(cleanTitle);
   switch (store.toLocaleLowerCase("en")) {
     case "steam":
       return `https://store.steampowered.com/search/?term=${query}`;
-    case "epic games":
-    case "epic games store":
-      return `https://store.epicgames.com/pt-BR/browse?q=${query}`;
     case "xbox":
     case "xbox store":
       return `https://www.xbox.com/pt-BR/Search/Results?q=${query}`;
@@ -170,37 +165,6 @@ export function officialStoreSearchUrl(store: string, title: string) {
       return "";
   }
 }
-
-export function searchNintendoCatalog(query: string): PromoGame[] {
-  const normalizedQuery = normalizeGameTitle(query);
-  if (!normalizedQuery) return [];
-
-  return Object.entries(nintendoProductsByTitle)
-    .filter(([normalizedTitle]) => normalizedTitle.includes(normalizedQuery))
-    .map(([, product]): PromoGame => ({
-      id: `nintendo-catalog-${product.titleId}`,
-      gameId: `nintendo:${product.titleId}`,
-      title: product.title,
-      store: "Nintendo eShop",
-      old: "",
-      price: "Consultar preço",
-      discount: "",
-      image: `/nintendo-api/image?id=${encodeURIComponent(product.titleId)}`,
-      url: product.storeUrl,
-      popularity: 0,
-      priceValue: Number.POSITIVE_INFINITY,
-      onSale: false,
-      category: categorizeGame(product.title),
-    }));
-}
-
-type NintendoPriceResponse = {
-  prices?: {
-    title_id: number;
-    regular_price?: { currency?: string; raw_value?: string };
-    discount_price?: { currency?: string; raw_value?: string };
-  }[];
-};
 
 type YouTubeSearchResponse = {
   items?: {
@@ -219,7 +183,6 @@ type SteamFreeGameSearchResponse = {
 
 const storeNames: Record<string, string> = {
   "1": "Steam",
-  "25": "Epic Games",
 };
 
 const storeIds = Object.keys(storeNames);
@@ -269,7 +232,7 @@ function normalizeGameTitle(title: string): string {
 
 function getYouTubeGameTitle(title: string): string {
   return title
-    .replace(/\s*\((?:epic games?|indiegala|itch\.io|steam|gog|stove|giveaway|key)\)\s*/gi, " ")
+    .replace(/\s*\((?:indiegala|itch\.io|steam|gog|stove|giveaway|key)\)\s*/gi, " ")
     .replace(/\s+(?:key\s+)?giveaway\s*$/i, "")
     .replace(/\s+\((?:key\s+)?giveaway\)\s*$/i, "")
     .replace(/\s+/g, " ")
@@ -411,26 +374,31 @@ export async function fetchGameOffers(gameId: string, usdBrl: number, signal: Ab
   } catch (error) {
     if (signal.aborted) throw error;
     storeNameMap = new Map(Object.entries(storeNames));
-    storeNamesError = `Não foi possível carregar os nomes oficiais da Steam e da Epic Games: ${String(error)}`;
+    storeNamesError = `Não foi possível carregar os nomes da loja Steam: ${String(error)}`;
   }
 
   const offers = (details.deals ?? [])
-    .filter((deal) => ["1", "25"].includes(deal.storeID) && Number.isFinite(Number(deal.price)) && Number(deal.price) >= 0)
-    .map((deal): GameOffer => ({
-      id: deal.dealID,
-      store: storeNameMap.get(deal.storeID) ?? `Loja ${deal.storeID}`,
-      price: currency.format(Number(deal.price) * usdBrl),
-      priceValue: Number(deal.price) * usdBrl,
-      normalPrice: Number(deal.retailPrice) > Number(deal.price)
-        ? currency.format(Number(deal.retailPrice) * usdBrl)
-        : "",
-      discount: Number(deal.savings) > 0 ? `-${Math.round(Number(deal.savings))}%` : "",
-      url: deal.storeID === "1" && /^\d+$/.test(steamAppId ?? "")
-        ? `https://store.steampowered.com/app/${steamAppId}`
-        : deal.storeID === "25"
-          ? `https://store.epicgames.com/pt-BR/browse?q=${encodeURIComponent(details.info?.title ?? "")}`
+    .filter((deal) => deal.storeID === "1" && Number.isFinite(Number(deal.price)) && Number(deal.price) >= 0)
+    .map((deal): GameOffer => {
+      const priceValue = Number(deal.price) * usdBrl;
+      const originalValue = Number(deal.retailPrice);
+      const hasOriginalPrice = Number.isFinite(originalValue) && originalValue >= Number(deal.price);
+      const checkedAt = new Date().toISOString();
+      return {
+        id: deal.dealID,
+        store: storeNameMap.get(deal.storeID) ?? `Loja ${deal.storeID}`,
+        price: currency.format(priceValue),
+        priceValue,
+        normalPrice: hasOriginalPrice ? currency.format(originalValue * usdBrl) : "",
+        discount: Number(deal.savings) > 0 ? `-${Math.round(Number(deal.savings))}%` : "",
+        url: /^\d+$/.test(steamAppId ?? "")
+          ? `https://store.steampowered.com/app/${steamAppId}`
           : `https://store.steampowered.com/search/?term=${encodeURIComponent(details.info?.title ?? "")}`,
-    }))
+        platform: "PC",
+        type: "digital",
+        checkedAt,
+      };
+    })
     .sort((a, b) => a.priceValue - b.priceValue);
   return { offers, historicalLow: null, storeNamesError };
 }
@@ -469,7 +437,7 @@ export async function fetchGameHunterConsoleOffers(title: string, signal: AbortS
     .map((record): GameOffer => {
       const priceValue = record.price!;
       const originalValue = record.original_price;
-      const normalPrice = typeof originalValue === "number" && originalValue > priceValue
+      const normalPrice = typeof originalValue === "number" && Number.isFinite(originalValue) && originalValue >= priceValue
         ? currency.format(originalValue)
         : "";
       const discount = typeof record.discount_pct === "number" && record.discount_pct > 0
@@ -498,6 +466,8 @@ export async function fetchGameHunterConsoleOffers(title: string, signal: AbortS
         url: offerUrl ?? `https://gamehunter.com.br/jogo/${encodeURIComponent(match.slug!)}`,
         platform: record.platform,
         type: record.type,
+        edition: typeof record.edition === "string" ? record.edition : undefined,
+        checkedAt: record.last_checked_at ?? record.scraped_at ?? new Date().toISOString(),
       };
     })
     .sort((a, b) => a.priceValue - b.priceValue);
@@ -525,41 +495,6 @@ export function fetchGameHunterConsolePlatforms(title: string) {
 
   gameHunterPlatformRequests.set(cacheKey, request);
   return request;
-}
-
-export async function fetchNintendoOffer(title: string, signal: AbortSignal): Promise<NintendoOfferLookup> {
-  const product = nintendoProductsByTitle[normalizeGameTitle(title)];
-  if (!product) return { mapped: false, offer: null };
-
-  const response = await fetchJson<NintendoPriceResponse>(
-    `/nintendo-api/price?ids=${encodeURIComponent(product.titleId)}`,
-    signal,
-  );
-  const price = response.prices?.find((item) => String(item.title_id) === product.titleId);
-  const regularValue = Number(price?.regular_price?.raw_value);
-  if (!price || !Number.isFinite(regularValue) || regularValue < 0 || price.regular_price?.currency !== "BRL") {
-    return { mapped: true, offer: null };
-  }
-
-  const discountValue = Number(price.discount_price?.raw_value);
-  const hasDiscount = Number.isFinite(discountValue) && discountValue >= 0 && discountValue < regularValue;
-  const priceValue = hasDiscount ? discountValue : regularValue;
-  const formatPrice = (value: number) => new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(value);
-  return {
-    mapped: true,
-    offer: {
-      id: `nintendo-${product.titleId}`,
-      store: "Nintendo eShop",
-      price: formatPrice(priceValue),
-      priceValue,
-      normalPrice: hasDiscount ? formatPrice(regularValue) : "",
-      discount: hasDiscount ? `-${Math.round((1 - discountValue / regularValue) * 100)}%` : "",
-      url: product.storeUrl,
-    },
-  };
 }
 
 async function fetchCachedSteamStoreData(steamAppId: string, signal: AbortSignal): Promise<SteamStoreResponse[string]["data"] | null> {
@@ -739,7 +674,7 @@ export async function fetchActiveDeals(signal: AbortSignal, usdBrl: number) {
           image: deal.thumb,
           url: deal.storeID === "1" && /^\d+$/.test(deal.steamAppID ?? "")
             ? `https://store.steampowered.com/app/${deal.steamAppID}`
-            : `https://store.epicgames.com/pt-BR/browse?q=${encodeURIComponent(deal.title)}`,
+            : `https://store.steampowered.com/search/?term=${encodeURIComponent(deal.title)}`,
           appUrl: deal.storeID === "1" && /^\d+$/.test(deal.steamAppID ?? "")
             ? `steam://store/${deal.steamAppID}`
             : undefined,
@@ -796,7 +731,7 @@ export async function searchGameCatalog(query: string, signal: AbortSignal, usdB
     }
 
     const deals = (details?.deals ?? [])
-      .filter((deal) => ["1", "25"].includes(deal.storeID))
+      .filter((deal) => deal.storeID === "1")
       .filter((deal) => Number.isFinite(Number(deal.price)) && Number(deal.price) > 0 && Number.isFinite(Number(deal.retailPrice)) && Number(deal.retailPrice) > 0)
       .sort((a, b) => Number(a.price) - Number(b.price));
     const bestDeal = deals[0];
@@ -807,14 +742,12 @@ export async function searchGameCatalog(query: string, signal: AbortSignal, usdB
     const discount = onSale && bestDeal ? `-${Math.round(Number(bestDeal.savings))}%` : "";
     const steamAppId = details?.info?.steamAppID ?? game.steamAppID;
     const dealUrl = bestDeal?.dealID
-    ? bestDeal.storeID === "1" && /^\d+$/.test(steamAppId ?? "")
+    ? /^\d+$/.test(steamAppId ?? "")
       ? `https://store.steampowered.com/app/${steamAppId}`
-      : bestDeal.storeID === "25"
-        ? `https://store.epicgames.com/pt-BR/browse?q=${encodeURIComponent(details?.info?.title ?? game.external)}`
-        : `https://store.steampowered.com/search/?term=${encodeURIComponent(details?.info?.title ?? game.external)}`
+      : `https://store.steampowered.com/search/?term=${encodeURIComponent(details?.info?.title ?? game.external)}`
     : steamAppId
       ? `https://store.steampowered.com/app/${steamAppId}`
-      : `https://store.epicgames.com/pt-BR/browse?q=${encodeURIComponent(game.external)}`;
+      : `https://store.steampowered.com/search/?term=${encodeURIComponent(game.external)}`;
 
     return {
       id: `catalog-${game.gameID}`,
@@ -883,7 +816,6 @@ export async function fetchActiveFreeGames(signal: AbortSignal) {
       const platforms = giveaway.platforms.split(",").map((platform) => platform.trim().toLocaleLowerCase("en"));
       const availablePlatforms = [
         ...(platforms.includes("steam") ? ["Steam"] : []),
-        ...(platforms.includes("epic games store") ? ["Epic Games"] : []),
         ...(platforms.some((platform) => /^xbox(?: one| series(?: x\|s)?| cloud gaming)$/.test(platform)) ? ["Xbox"] : []),
         ...(platforms.some((platform) => /^(?:playstation [45]|ps[45])$/.test(platform)) ? ["PlayStation"] : []),
       ];
