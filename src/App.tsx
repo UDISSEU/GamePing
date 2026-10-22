@@ -491,6 +491,11 @@ function Header({
     onSearch(normalizedTerm);
   };
 
+  const openProfile = () => {
+    setOpen(false);
+    onProfile();
+  };
+
   const searchBox = (className = "") => (
     <div className={`game-search ${className}`}>
       <label className="search">
@@ -544,7 +549,7 @@ function Header({
         </nav>
         <div className="header-actions">
           <Button className="alerts-entry" ariaLabel="Abrir central de alertas" onClick={() => go("alerts")}><Icon name="bell" /><span>Ativar alertas</span></Button>
-          {accountEmail ? <button className="account-chip" onClick={onProfile} title="Abrir perfil" aria-label="Abrir perfil"><Icon name="user" />Meu perfil</button> : <button className="avatar" onClick={onProfile} aria-label="Abrir perfil"><Icon name="user" /></button>}
+          {accountEmail ? <button className="account-chip" onClick={openProfile} title="Abrir perfil" aria-label="Abrir perfil"><Icon name="user" />Meu perfil</button> : <button className="avatar" onClick={openProfile} aria-label="Abrir perfil"><Icon name="user" /></button>}
           <button className="menu-button" onClick={() => setOpen(!open)} aria-label={open ? "Fechar menu" : "Abrir menu"} aria-expanded={open} aria-controls="primary-navigation"><Icon name={open ? "x" : "menu"} /></button>
         </div>
       </div>

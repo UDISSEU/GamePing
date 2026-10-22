@@ -396,7 +396,7 @@ footer { position: relative; border-top: 1px solid var(--border); background: rg
 @keyframes fade { from { opacity: 0; } }
 @keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(.98); } }
 
-@media (min-width: 1101px) and (max-width: 1220px) {
+@media (min-width: 1101px) and (max-width: 1320px) {
   .header-inner { display: grid; grid-template-columns: auto minmax(140px, 1fr) auto; gap: 10px; }
   .header-inner > .game-search { display: block; }
   .nav { position: fixed; left: 20px; right: 20px; top: 68px; padding: 15px; background: #0e192c; border: 1px solid var(--border); border-radius: 10px; flex-direction: column; align-items: stretch; opacity: 0; pointer-events: none; transform: translateY(-10px); transition: .3s; }
@@ -559,7 +559,7 @@ footer { position: relative; border-top: 1px solid var(--border); background: rg
   .live-icon { animation: none; }
 }
 
-.profile-page { min-height: calc(100vh - var(--header-height)); padding: 42px 0 100px; background: radial-gradient(circle at 50% 0, rgba(27,45,82,.28), transparent 34%); }
+.profile-page { min-height: calc(100vh - var(--header-height)); padding: calc(var(--header-height) + 36px) 0 100px; background: radial-gradient(circle at 50% 0, rgba(27,45,82,.28), transparent 34%); }
 .profile-container { max-width: 1120px; }
 .profile-page .page-title { margin-bottom: 34px; }
 .profile-avatar { width: 68px; height: 68px; flex: none; display: grid; place-items: center; border: 1px solid rgba(0,240,255,.35); border-radius: 20px; background: linear-gradient(145deg, #1b2d52, #101a2e); color: var(--cyan); font: 700 24px "Rajdhani", sans-serif; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
@@ -597,19 +597,20 @@ footer { position: relative; border-top: 1px solid var(--border); background: rg
 .profile-auth-perks { display: grid; gap: 13px; margin-top: 32px; }
 .profile-auth-perks span { display: flex; align-items: center; gap: 10px; color: #d8dfed; font-size: 12px; }
 .profile-auth-perks .icon { color: var(--cyan); }
-.profile-auth-card { padding: 30px; border: 1px solid var(--border); border-radius: 15px; background: linear-gradient(145deg, rgba(17,24,39,.98), rgba(10,16,28,.97)); box-shadow: 0 24px 70px rgba(0,0,0,.34); }
-.profile-auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 25px; border: 1px solid rgba(128,145,173,.13); border-radius: 9px; background: rgba(5,10,18,.65); }
+.profile-auth-card { padding: 38px; border: 1px solid var(--border); border-radius: 15px; background: linear-gradient(145deg, rgba(17,24,39,.98), rgba(10,16,28,.97)); box-shadow: 0 24px 70px rgba(0,0,0,.34); }
+.profile-auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 5px; margin-bottom: 32px; border: 1px solid rgba(128,145,173,.13); border-radius: 9px; background: rgba(5,10,18,.65); }
 .profile-auth-tabs button { min-height: 38px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 750; cursor: pointer; }
 .profile-auth-tabs button.active { background: #1a2942; color: var(--text); box-shadow: 0 2px 10px rgba(0,0,0,.18); }
 .profile-auth-card h2 { font-size: 30px; }
-.profile-auth-card > p { margin: 5px 0 22px; color: var(--muted); font-size: 11px; line-height: 1.6; }
-.profile-auth-form label { margin-bottom: 14px; }
-.profile-auth-form .input { height: 45px; }
-.profile-auth-form .button { margin-top: 6px; }
-.profile-auth-note { display: block; margin-top: 17px; color: #7f8ba0; font-size: 9px; line-height: 1.55; }
+.profile-auth-card > p { margin: 8px 0 28px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.profile-auth-form { display: flex; flex-direction: column; gap: 5px; }
+.profile-auth-form label { margin-bottom: 13px; }
+.profile-auth-form .input { height: 48px; margin-top: 10px; }
+.profile-auth-form .button { min-height: 47px; margin-top: 7px; }
+.profile-auth-note { display: block; margin-top: 22px; padding-top: 16px; border-top: 1px solid rgba(128,145,173,.13); color: #7f8ba0; font-size: 9px; line-height: 1.65; }
 .profile-auth-error { display: block; margin: -4px 0 10px; color: #ff858b; font-size: 11px; }
 @media (max-width: 700px) {
-  .profile-page { padding: 28px 0 70px; }
+  .profile-page { padding: calc(var(--header-height) + 24px) 0 70px; }
   .profile-page .page-title { gap: 14px; margin-bottom: 24px; }
   .profile-avatar { width: 54px; height: 54px; border-radius: 16px; }
   .profile-page .page-title h1 { font-size: 34px; }
@@ -622,5 +623,5 @@ footer { position: relative; border-top: 1px solid var(--border); background: rg
   .profile-auth-intro { padding: 5px 0; }
   .profile-auth-intro h1 { font-size: 52px; }
   .profile-auth-perks { display: none; }
-  .profile-auth-card { padding: 22px; }
+  .profile-auth-card { padding: 25px 22px; }
 }
