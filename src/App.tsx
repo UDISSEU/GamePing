@@ -851,10 +851,10 @@ function Home({
               {current && <div className="hero-price"><Discount>{current.discount}</Discount><span><small>{current.old}</small><strong>{current.price}</strong></span></div>}
               {current && <div className="hero-buttons"><Button onClick={() => onVisit(current)}>Ver oferta <Icon name="arrow" /></Button><Button variant="secondary" onClick={() => onFavorite(current.title)}><Icon name="heart" />{favorites.includes(current.title) ? "Remover da lista" : "Adicionar à lista"}</Button></div>}
             </div>
-            {rotatedGames.length > 1 && <div className="carousel-controls">
-              <button onClick={() => setSlide((index) => (index + rotatedGames.length - 1) % rotatedGames.length)} aria-label="Anterior"><Icon name="chevron" /></button>
-              <span>{slide % rotatedGames.length + 1} / {rotatedGames.length}</span>
-              <button onClick={() => setSlide((index) => (index + 1) % rotatedGames.length)} aria-label="Próximo"><Icon name="chevron" /></button>
+{visibleGames.length > 1 && <div className="carousel-controls">
+  <button onClick={() => setSlide((index) => (index + visibleGames.length - 1) % visibleGames.length)} aria-label="Anterior"><Icon name="chevron" /></button>
+  <span>{slide % visibleGames.length + 1} / {visibleGames.length}</span>
+  <button onClick={() => setSlide((index) => (index + 1) % visibleGames.length)} aria-label="Próximo"><Icon name="chevron" /></button>
             </div>}
           </div>
         </section>
@@ -1549,6 +1549,10 @@ export default function App() {
   useEffect(() => { document.body.style.overflow = modal ? "hidden" : ""; }, [modal]);
   return (
     <div className="app">
+      <video className="site-background-video" autoPlay muted loop playsInline aria-hidden="true">
+        <source src="/planodefundo.mp4" type="video/mp4" />
+      </video>
+      <div className="site-background-shade" aria-hidden="true" />
       <Header page={page} go={go} onLogin={() => setModal("login")} query={query} onSearch={setQuery} games={games} usdBrl={usdBrl} cartCount={cart.length} accountEmail={accountEmail} onLogout={() => setAccountEmail("")} />
       {query.trim() ? <SearchResults query={query} go={go} favorites={favorites} toggleFavorite={guardedFavorite} games={games} loading={loading} error={dealsError} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} /> : page === "home" && <Home go={go} favorites={favorites} games={games} freeGames={freeGames} loading={loading} error={[dealsError, freeGamesError].filter(Boolean).join(" ")} lastUpdated={lastUpdated} onRefresh={() => setRefreshVersion((version) => version + 1)} recommendations={recommendations} onVisit={visitGame} onBuy={guardedBuy} onFavorite={guardedFavorite} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} usdBrl={usdBrl} usdBrlUpdatedAt={usdBrlUpdatedAt} usdBrlStale={usdBrlStale} personalized={Object.values(gameVisits).some((count) => count > 0)} category={category} onCategoryChange={setCategory} sortOrder={sortOrder} onSortChange={setSortOrder} onViewMore={viewCollection} />}
       {!query.trim() && page === "free" && <FreeGamesPage freeGames={freeGames} loading={loading} error={freeGamesError} onBuy={guardedBuy} />}
