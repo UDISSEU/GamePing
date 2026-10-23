@@ -870,12 +870,12 @@ function Home({
               {current && <div className="hero-price"><Discount>{current.discount}</Discount><span><small>{current.old}</small><strong>{current.price}</strong></span></div>}
               {current && <div className="hero-buttons"><Button onClick={() => onVisit(current)}>Ver oferta <Icon name="arrow" /></Button><Button variant="secondary" onClick={() => onFavorite(current.title)}><Icon name="heart" />{favorites.includes(current.title) ? "Remover da lista" : "Adicionar à lista"}</Button></div>}
             </div>
-{visibleGames.length > 1 && <div className="carousel-controls">
-  <button onClick={() => setSlide((index) => (index + visibleGames.length - 1) % visibleGames.length)} aria-label="Anterior"><Icon name="chevron" /></button>
-  <span>{slide % visibleGames.length + 1} / {visibleGames.length}</span>
-  <button onClick={() => setSlide((index) => (index + 1) % visibleGames.length)} aria-label="Próximo"><Icon name="chevron" /></button>
-            </div>}
           </div>
+          {visibleGames.length > 1 && <div className="carousel-controls">
+            <button onClick={() => setSlide((index) => (index + visibleGames.length - 1) % visibleGames.length)} aria-label="Anterior"><Icon name="chevron" /></button>
+            <span>{slide % visibleGames.length + 1} / {visibleGames.length}</span>
+            <button onClick={() => setSlide((index) => (index + 1) % visibleGames.length)} aria-label="Próximo"><Icon name="chevron" /></button>
+          </div>}
         </section>
 
         <div className="container content">
