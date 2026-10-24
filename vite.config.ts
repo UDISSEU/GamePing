@@ -2,7 +2,6 @@ import { defineConfig, loadEnv, type HtmlTagDescriptor, type Plugin } from 'vite
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
-import { nintendoProductsByTitle } from './src/nintendoCatalog'
 
 import siteConfiguration from './.figma/make/site.json'
 
@@ -37,8 +36,8 @@ react(),
       figmaErrorOverlayReplay(),
       figmaReactRefreshBoundaryFallback(),
       figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
-      nintendoPriceProxy(),
       gameHunterApiProxy(),
+      cheapSharkApiProxy(),
       youtubeSearchProxy(youtubeApiKey),
     ],
     resolve: {
@@ -412,122 +411,6 @@ function figmaMakeKitPlugin(options: { storiesGlob: string | string[] }): Plugin
   }
 }
 
-function nintendoPriceProxy(): Plugin {
-  const cache = new Map<string, { expiresAt: number; body: string }>()
-  const imageCache = new Map<string, { expiresAt: number; body: Uint8Array; contentType: string }>()
-  const cacheDuration = 15 * 60 * 1000
-
-  async function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: (error?: Error) => void) {
-    const requestUrl = new URL(req.url || '/', 'http://localhost')
-    if (requestUrl.pathname !== '/nintendo-api/price' && requestUrl.pathname !== '/nintendo-api/image') return next()
-    if (req.method !== 'GET') {
-      res.statusCode = 405
-      res.setHeader('Allow', 'GET')
-      res.setHeader('Content-Type', 'application/json')
-      res.end(JSON.stringify({ error: 'Only GET requests are allowed.' }))
-      return
-    }
-
-    if (requestUrl.pathname === '/nintendo-api/image') {
-      const id = requestUrl.searchParams.get('id')
-      const product = Object.values(nintendoProductsByTitle).find((item) => item.titleId === id)
-      if (!product) {
-        res.statusCode = 404
-        res.setHeader('Content-Type', 'application/json')
-        res.end(JSON.stringify({ error: 'Nintendo artwork is not available for this product ID.' }))
-        return
-      }
-
-      const cachedImage = imageCache.get(product.titleId)
-      if (cachedImage && cachedImage.expiresAt > Date.now()) {
-        res.setHeader('Content-Type', cachedImage.contentType)
-        res.setHeader('Cache-Control', 'private, max-age=900')
-        res.end(cachedImage.body)
-        return
-      }
-
-      try {
-        const upstreamResponse = await fetch(product.imageUrl, { signal: AbortSignal.timeout(10000) })
-        if (!upstreamResponse.ok) {
-          res.statusCode = 502
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          res.end(JSON.stringify({ error: `Nintendo artwork request failed with HTTP ${upstreamResponse.status}.` }))
-          return
-        }
-        const contentType = upstreamResponse.headers.get('content-type') ?? ''
-        if (!contentType.startsWith('image/')) {
-          res.statusCode = 502
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          res.end(JSON.stringify({ error: 'Nintendo returned an unsupported artwork format.' }))
-          return
-        }
-        const body = new Uint8Array(await upstreamResponse.arrayBuffer())
-        imageCache.set(product.titleId, { expiresAt: Date.now() + cacheDuration, body, contentType })
-        res.setHeader('Content-Type', contentType)
-        res.setHeader('Cache-Control', 'private, max-age=900')
-        res.end(body)
-      } catch (error) {
-        console.error('Nintendo eShop artwork request failed:', error)
-        res.statusCode = 502
-        res.setHeader('Content-Type', 'application/json; charset=utf-8')
-        res.end(JSON.stringify({ error: 'Unable to reach the Nintendo eShop artwork service.' }))
-      }
-      return
-    }
-
-    const ids = requestUrl.searchParams.get('ids')?.split(',') ?? []
-    if (ids.length < 1 || ids.length > 10 || ids.some((id) => !/^700100000\d{5}$/.test(id))) {
-      res.statusCode = 400
-      res.setHeader('Content-Type', 'application/json')
-      res.end(JSON.stringify({ error: 'One to ten valid Nintendo Switch product IDs are required.' }))
-      return
-    }
-
-    const cacheKey = [...ids].sort().join(',')
-    const cached = cache.get(cacheKey)
-    if (cached && cached.expiresAt > Date.now()) {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      res.setHeader('Cache-Control', 'private, max-age=900')
-      res.end(cached.body)
-      return
-    }
-
-    const upstreamUrl = new URL('https://api.ec.nintendo.com/v1/price')
-    upstreamUrl.search = new URLSearchParams({
-      country: 'BR',
-      lang: 'pt',
-      ids: ids.join(','),
-    }).toString()
-
-    try {
-      const upstreamResponse = await fetch(upstreamUrl, { signal: AbortSignal.timeout(10000) })
-      const body = await upstreamResponse.text()
-      res.statusCode = upstreamResponse.status
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      if (upstreamResponse.ok) {
-        cache.set(cacheKey, { expiresAt: Date.now() + cacheDuration, body })
-        if (cache.size > 200) cache.delete(cache.keys().next().value!)
-      }
-      res.end(body)
-    } catch (error) {
-      console.error('Nintendo eShop price request failed:', error)
-      res.statusCode = 502
-      res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      res.end(JSON.stringify({ error: 'Unable to reach the Nintendo eShop price API.' }))
-    }
-  }
-
-  return {
-    name: 'gameping-nintendo-price-proxy',
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
-    },
-    configurePreviewServer(server) {
-      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
-    },
-  }
-}
-
 function gameHunterApiProxy(): Plugin {
   const cache = new Map<string, { expiresAt: number; body: string }>()
   const cacheDuration = 5 * 60 * 1000
@@ -574,7 +457,7 @@ function gameHunterApiProxy(): Plugin {
 
     try {
       const upstreamResponse = await fetch(upstreamUrl, {
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', 'User-Agent': 'GamePing/1.0 (Game price tracker; contact: dev@gameping.app)' },
         signal: AbortSignal.timeout(12000),
       })
       const body = await upstreamResponse.text()
@@ -601,6 +484,77 @@ function gameHunterApiProxy(): Plugin {
 
   return {
     name: 'gameping-gamehunter-api-proxy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+  }
+}
+
+function cheapSharkApiProxy(): Plugin {
+  const cache = new Map<string, { expiresAt: number; body: string }>()
+  const cacheDuration = 3 * 60 * 1000
+
+  async function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: (error?: Error) => void) {
+    const requestUrl = new URL(req.url || '/', 'http://localhost')
+    if (!requestUrl.pathname.startsWith('/cheapshark-api/')) return next()
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.setHeader('Allow', 'GET')
+      res.end(JSON.stringify({ error: 'Only GET requests are allowed.' }))
+      return
+    }
+
+    const endpoint = requestUrl.pathname.replace('/cheapshark-api/', '')
+    const allowedEndpoints = ['deals', 'games', 'stores']
+    if (!allowedEndpoints.includes(endpoint)) {
+      res.statusCode = 404
+      res.end(JSON.stringify({ error: 'CheapShark endpoint not found.' }))
+      return
+    }
+    const upstreamUrl = new URL(`https://www.cheapshark.com/api/1.0/${endpoint}`)
+    upstreamUrl.search = requestUrl.search
+
+    const cacheKey = upstreamUrl.toString()
+    const cached = cache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      res.setHeader('Cache-Control', 'private, max-age=180')
+      res.end(cached.body)
+      return
+    }
+
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, {
+        headers: { Accept: 'application/json', 'User-Agent': 'GamePing/1.0 (Game price tracker; contact: dev@gameping.app)' },
+        signal: AbortSignal.timeout(12000),
+      })
+      const body = await upstreamResponse.text()
+      if (!upstreamResponse.ok) {
+        res.statusCode = upstreamResponse.status
+        res.end(JSON.stringify({ error: `CheapShark API responded with HTTP ${upstreamResponse.status}.` }))
+        return
+      }
+      if (!upstreamResponse.headers.get('content-type')?.includes('application/json')) {
+        res.statusCode = 502
+        res.end(JSON.stringify({ error: 'CheapShark returned an unsupported response format.' }))
+        return
+      }
+      cache.set(cacheKey, { expiresAt: Date.now() + cacheDuration, body })
+      if (cache.size > 300) cache.delete(cache.keys().next().value!)
+      res.setHeader('Cache-Control', 'private, max-age=180')
+      res.end(body)
+    } catch (error) {
+      console.error('CheapShark API request failed:', error)
+      res.statusCode = 502
+      res.end(JSON.stringify({ error: 'Unable to reach the CheapShark API.' }))
+    }
+  }
+
+  return {
+    name: 'gameping-cheapshark-api-proxy',
     configureServer(server) {
       server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
     },
