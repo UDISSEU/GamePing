@@ -1610,7 +1610,7 @@ function Footer() {
   const [newsletterSubscribed, setNewsletterSubscribed] = useState(false);
   const [newsletterError, setNewsletterError] = useState("");
   const socialLinks = [
-    { name: "YouTube", url: "https://www.youtube.com" },
+    { name: "YouTube", url: "https://www.youtube.com/@GamePing-t2u" },
   ];
   const subscribe = () => {
     const email = newsletterEmail.trim();
