@@ -325,7 +325,7 @@ export async function fetchSteamCloudSupport(steamAppId: string | undefined, tit
 
 async function fetchCheapSharkStoreNames(): Promise<Map<string, string>> {
   cheapSharkStoreNamesPromise ??= fetchJson<CheapSharkStore[]>(
-    "https://www.cheapshark.com/api/1.0/stores",
+    "/cheapshark-api/stores",
     AbortSignal.timeout(10000),
   )
     .then((stores) => new Map(stores.map((store) => [store.storeID, store.storeName])))
@@ -359,7 +359,7 @@ export async function fetchGameOffers(gameId: string, usdBrl: number, signal: Ab
   let details = gameDetailsCache.get(gameId);
   if (details === undefined) {
     details = await fetchJson<CheapSharkGameDetails>(
-      `https://www.cheapshark.com/api/1.0/games?id=${encodeURIComponent(gameId)}`,
+      `/cheapshark-api/games?id=${encodeURIComponent(gameId)}`,
       signal,
     );
     gameDetailsCache.set(gameId, details);
@@ -647,18 +647,130 @@ export async function fetchUsdBrl(signal: AbortSignal) {
   }
 }
 
+// Jogos populares de console usados para buscar ofertas Xbox/PlayStation no GameHunter.
+const consoleFeaturedTitles = [
+  "EA Sports FC 26",
+  "EA Sports FC 25",
+  "Elden Ring",
+  "Elden Ring Nightreign",
+  "Red Dead Redemption 2",
+  "GTA V",
+  "Grand Theft Auto V",
+  "Cyberpunk 2077",
+  "Hogwarts Legacy",
+  "Call of Duty Black Ops 6",
+  "Forza Horizon 5",
+  "Halo Infinite",
+  "Marvel's Spider-Man 2",
+  "Marvel's Spider-Man: Miles Morales",
+  "Marvel's Spider-Man Remastered",
+  "God of War Ragnarok",
+  "The Last of Us Part II Remastered",
+  "Horizon Forbidden West",
+  "Ghost of Tsushima",
+  "Nioh Collection",
+  "Days Gone",
+  "Returnal",
+  "Demon's Souls",
+  "Astro Bot",
+  "Ratchet & Clank: Rift Apart",
+];
+
 export async function fetchActiveDeals(signal: AbortSignal, usdBrl: number) {
+  // Busca várias páginas de ofertas para que jogos famosos (ex.: Undertale),
+  // que ficam além da primeira página da API, apareçam no site.
+  const pageNumbers = [0, 1, 2, 3, 4, 5];
   const results = await Promise.allSettled(
-    storeIds.map(async (storeId) => {
+    storeIds.flatMap((storeId) => pageNumbers.map(async (pageNumber) => {
       const params = new URLSearchParams({
         storeID: storeId,
         onSale: "1",
         pageSize: "60",
         sortBy: "DealRating",
         desc: "1",
+        pageNumber: String(pageNumber),
       });
       const deals = await fetchJson<CheapSharkDeal[]>(
-        `https://www.cheapshark.com/api/1.0/deals?${params}`,
+        `/cheapshark-api/deals?${params}`,
+        signal,
+        "no-store",
+      );
+      return deals
+        .filter((deal) => deal.isOnSale === "1" && Number(deal.savings) > 0)
+        .map((deal): PromoGame => ({
+          id: deal.dealID,
+          title: deal.title,
+          store: storeNames[deal.storeID] ?? "Loja",
+          old: currency.format(Number(deal.normalPrice) * usdBrl),
+          price: currency.format(Number(deal.salePrice) * usdBrl),
+          discount: `-${Math.round(Number(deal.savings))}%`,
+          image: deal.thumb,
+          url: deal.storeID === "1" && /^\d+$/.test(deal.steamAppID ?? "")
+            ? `https://store.steampowered.com/app/${deal.steamAppID}`
+            : `https://store.steampowered.com/search/?term=${encodeURIComponent(deal.title)}`,
+          appUrl: deal.storeID === "1" && /^\d+$/.test(deal.steamAppID ?? "")
+            ? `steam://store/${deal.steamAppID}`
+            : undefined,
+          steamAppId: /^\d+$/.test(deal.steamAppID ?? "") ? deal.steamAppID ?? undefined : undefined,
+          gameId: deal.gameID,
+          popularity: Number(deal.steamRatingCount) || 0,
+          priceValue: Number(deal.salePrice) * usdBrl,
+          onSale: true,
+          category: categorizeGame(deal.title),
+        }));
+    })),
+  );
+
+  const allDeals: PromoGame[] = [];
+  const errors: string[] = [];
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      allDeals.push(...result.value);
+    } else {
+      errors.push(String(result.reason));
+    }
+  }
+
+  const seen = new Set<string>();
+  const uniqueDeals = allDeals.filter((deal) => {
+    const key = deal.gameId || deal.title.toLocaleLowerCase("en");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Jogos famosos nem sempre aparecem nas primeiras páginas da API
+  // (a ordenação por "DealRating" pode omiti-los), então buscamos
+  // diretamente pelos títulos mais populares conhecidos.
+  const famousTitles = [
+    "Undertale",
+    "Hollow Knight",
+    "Stardew Valley",
+    "Hades",
+    "Celeste",
+    "Cuphead",
+    "Terraria",
+    "Dead Cells",
+    "Sekiro",
+    "Elden Ring",
+    "Red Dead Redemption 2",
+    "Cyberpunk 2077",
+    "The Witcher 3",
+    "Dark Souls III",
+    "Baldur's Gate 3",
+  ];
+  const missingFamous = famousTitles.filter((title) =>
+    !uniqueDeals.some((deal) => deal.title.toLocaleLowerCase("en") === title.toLocaleLowerCase("en")));
+  const famousResults = await Promise.allSettled(
+    missingFamous.map(async (title) => {
+      const params = new URLSearchParams({
+        storeID: "1",
+        onSale: "1",
+        pageSize: "5",
+        title,
+      });
+      const deals = await fetchJson<CheapSharkDeal[]>(
+        `/cheapshark-api/deals?${params}`,
         signal,
         "no-store",
       );
@@ -687,23 +799,74 @@ export async function fetchActiveDeals(signal: AbortSignal, usdBrl: number) {
         }));
     }),
   );
-
-  const deals: PromoGame[] = [];
-  const errors: string[] = [];
-  results.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-      deals.push(...result.value);
-    } else if (!signal.aborted) {
-      errors.push(`${storeNames[storeIds[index]]}: ${String(result.reason)}`);
+  for (const result of famousResults) {
+    if (result.status !== "fulfilled") continue;
+    for (const deal of result.value) {
+      const key = deal.gameId || deal.title.toLocaleLowerCase("en");
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueDeals.push(deal);
+      }
     }
-  });
+  }
 
-  if (deals.length === 0 && errors.length === storeIds.length) {
-    throw new Error(errors.join(" "));
+  // Ofertas Xbox/PlayStation (GameHunter) dos jogos populares de console.
+  // Apenas ofertas realmente em promoção (com desconto) entram no feed;
+  // itens a preço cheio são descartados.
+  const consoleResults = await Promise.allSettled(
+    consoleFeaturedTitles.map(async (title): Promise<PromoGame[]> => {
+      const { offers } = await fetchGameHunterConsoleOffers(title, signal);
+      const consoleOffers = offers.filter((offer) =>
+        (offer.store === "Xbox Store" || offer.store === "PlayStation Store") && Boolean(offer.discount));
+      if (!consoleOffers.length) return [];
+      // Enriquece com capa e steamAppId via CheapShark /games (o endpoint /deals não aceita "title").
+      let thumb = "";
+      let steamAppId: string | undefined;
+      let popularity = 150;
+      try {
+        const params = new URLSearchParams({ title, limit: "1" });
+        const [match] = await fetchJson<CheapSharkGame[]>(
+          `/cheapshark-api/games?${params}`,
+          signal,
+        );
+        if (match) {
+          thumb = match.thumb;
+          if (/^\d+$/.test(match.steamAppID ?? "")) steamAppId = match.steamAppID ?? undefined;
+        }
+      } catch {
+        // Sem capa disponível: o card aparece com o visual padrão.
+      }
+      return consoleOffers.map((offer, index): PromoGame => ({
+        id: `console-${offer.id}-${index}`,
+        title: title,
+        store: offer.store === "Xbox Store" ? "Xbox" : "PlayStation",
+        old: offer.normalPrice,
+        price: offer.price,
+        discount: offer.discount,
+        image: thumb,
+        url: offer.url,
+        steamAppId,
+        gameId: `console-${offer.id}-${index}`,
+        popularity,
+        priceValue: offer.priceValue,
+        onSale: true,
+        category: categorizeGame(title),
+      }));
+    }),
+  );
+  for (const result of consoleResults) {
+    if (result.status !== "fulfilled") continue;
+    for (const deal of result.value) {
+      const key = deal.gameId;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueDeals.push(deal);
+      }
+    }
   }
 
   return {
-    deals: deals.sort((a, b) => b.popularity - a.popularity),
+    deals: uniqueDeals.sort((a, b) => b.popularity - a.popularity),
     errors,
   };
 }
@@ -711,7 +874,7 @@ export async function fetchActiveDeals(signal: AbortSignal, usdBrl: number) {
 export async function searchGameCatalog(query: string, signal: AbortSignal, usdBrl: number, limit = 15) {
   const params = new URLSearchParams({ title: query, limit: String(limit) });
   const results = await fetchJson<CheapSharkGame[]>(
-    `https://www.cheapshark.com/api/1.0/games?${params}`,
+    `/cheapshark-api/games?${params}`,
     signal,
   );
   return Promise.all(results.map(async (game): Promise<PromoGame> => {
@@ -719,7 +882,7 @@ export async function searchGameCatalog(query: string, signal: AbortSignal, usdB
     if (details === undefined) {
       try {
         details = await fetchJson<CheapSharkGameDetails>(
-          `https://www.cheapshark.com/api/1.0/games?id=${encodeURIComponent(game.gameID)}`,
+          `/cheapshark-api/games?id=${encodeURIComponent(game.gameID)}`,
           signal,
         );
         gameDetailsCache.set(game.gameID, details);

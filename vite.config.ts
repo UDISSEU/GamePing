@@ -37,6 +37,7 @@ react(),
       figmaReactRefreshBoundaryFallback(),
       figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
       gameHunterApiProxy(),
+      cheapSharkApiProxy(),
       youtubeSearchProxy(youtubeApiKey),
     ],
     resolve: {
@@ -456,7 +457,7 @@ function gameHunterApiProxy(): Plugin {
 
     try {
       const upstreamResponse = await fetch(upstreamUrl, {
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', 'User-Agent': 'GamePing/1.0 (Game price tracker; contact: dev@gameping.app)' },
         signal: AbortSignal.timeout(12000),
       })
       const body = await upstreamResponse.text()
@@ -483,6 +484,77 @@ function gameHunterApiProxy(): Plugin {
 
   return {
     name: 'gameping-gamehunter-api-proxy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
+    },
+  }
+}
+
+function cheapSharkApiProxy(): Plugin {
+  const cache = new Map<string, { expiresAt: number; body: string }>()
+  const cacheDuration = 3 * 60 * 1000
+
+  async function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: (error?: Error) => void) {
+    const requestUrl = new URL(req.url || '/', 'http://localhost')
+    if (!requestUrl.pathname.startsWith('/cheapshark-api/')) return next()
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.setHeader('Allow', 'GET')
+      res.end(JSON.stringify({ error: 'Only GET requests are allowed.' }))
+      return
+    }
+
+    const endpoint = requestUrl.pathname.replace('/cheapshark-api/', '')
+    const allowedEndpoints = ['deals', 'games', 'stores']
+    if (!allowedEndpoints.includes(endpoint)) {
+      res.statusCode = 404
+      res.end(JSON.stringify({ error: 'CheapShark endpoint not found.' }))
+      return
+    }
+    const upstreamUrl = new URL(`https://www.cheapshark.com/api/1.0/${endpoint}`)
+    upstreamUrl.search = requestUrl.search
+
+    const cacheKey = upstreamUrl.toString()
+    const cached = cache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      res.setHeader('Cache-Control', 'private, max-age=180')
+      res.end(cached.body)
+      return
+    }
+
+    try {
+      const upstreamResponse = await fetch(upstreamUrl, {
+        headers: { Accept: 'application/json', 'User-Agent': 'GamePing/1.0 (Game price tracker; contact: dev@gameping.app)' },
+        signal: AbortSignal.timeout(12000),
+      })
+      const body = await upstreamResponse.text()
+      if (!upstreamResponse.ok) {
+        res.statusCode = upstreamResponse.status
+        res.end(JSON.stringify({ error: `CheapShark API responded with HTTP ${upstreamResponse.status}.` }))
+        return
+      }
+      if (!upstreamResponse.headers.get('content-type')?.includes('application/json')) {
+        res.statusCode = 502
+        res.end(JSON.stringify({ error: 'CheapShark returned an unsupported response format.' }))
+        return
+      }
+      cache.set(cacheKey, { expiresAt: Date.now() + cacheDuration, body })
+      if (cache.size > 300) cache.delete(cache.keys().next().value!)
+      res.setHeader('Cache-Control', 'private, max-age=180')
+      res.end(body)
+    } catch (error) {
+      console.error('CheapShark API request failed:', error)
+      res.statusCode = 502
+      res.end(JSON.stringify({ error: 'Unable to reach the CheapShark API.' }))
+    }
+  }
+
+  return {
+    name: 'gameping-cheapshark-api-proxy',
     configureServer(server) {
       server.middlewares.use((req, res, next) => { void handleRequest(req, res, next) })
     },

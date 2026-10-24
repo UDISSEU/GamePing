@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { fetchActiveDeals, fetchActiveFreeGames, fetchGameHunterConsoleOffers, fetchGameHunterConsolePlatforms, fetchGameOffers, fetchGameTrailer, fetchSteamArtwork, fetchSteamCloudSupport, fetchSteamGameDetails, fetchUsdBrl, fetchYouTubeTrailer, gameCategories, officialStoreSearchUrl, searchGameCatalog, type FreeGame, type GameCategory, type GameOffer, type GamePreview, type PromoGame, type SteamGameDetails } from "./promotions";
 
-type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist" | "cart" | "collection" | "profile";
+type Page = "home" | "free" | "new" | "game" | "alerts" | "wishlist" | "cart" | "collection" | "profile" | "about" | "how" | "help";
 type CollectionKey = "offers" | "popular" | "other" | "recommended" | "free";
 type IconName =
   | "search"
@@ -68,7 +68,14 @@ function readSavedFavorites() {
   );
 }
 
+const ALERTS_VERSION = "2";
+
 function readSavedAlerts() {
+  if (readSaved("gameping:alerts-version", "") !== ALERTS_VERSION) {
+    window.localStorage.removeItem("gameping:alerts");
+    window.localStorage.setItem("gameping:alerts-version", ALERTS_VERSION);
+    return [];
+  }
   const savedAlerts = readSaved<unknown>("gameping:alerts", []);
   if (!Array.isArray(savedAlerts)) return [];
   return savedAlerts.flatMap((alert): PriceAlert[] => {
@@ -567,9 +574,10 @@ function Header({
           <button className={page === "free" ? "active" : ""} onClick={() => { go("free"); setOpen(false); }}>Grátis</button>
           <button className={page === "new" ? "active" : ""} onClick={() => { go("new"); setOpen(false); }}>Destaques</button>
           <button className={page === "wishlist" ? "active" : ""} onClick={() => { go("wishlist"); setOpen(false); }}>Minha lista</button>
-          <button className={page === "cart" ? "active" : ""} onClick={() => { go("cart"); setOpen(false); }}>Carrinho ({cartCount})</button>
+          <button className={page === "cart" ? "active" : ""} onClick={() => { go("cart"); setOpen(false); }}><Icon name="cart" size={15} />Carrinho ({cartCount})</button>
         </nav>
         <div className="header-actions">
+
           <Button className="alerts-entry" ariaLabel="Abrir central de alertas" onClick={() => go("alerts")}><Icon name="bell" /><span>Ativar alertas</span></Button>
           {accountEmail ? <button className="account-chip" onClick={onProfile} title="Abrir perfil" aria-label="Abrir perfil"><Icon name="user" />Meu perfil</button> : <button className="avatar" onClick={onProfile} aria-label="Abrir perfil"><Icon name="user" /></button>}
           <button className="menu-button" onClick={() => setOpen(!open)} aria-label={open ? "Fechar menu" : "Abrir menu"} aria-expanded={open} aria-controls="primary-navigation"><Icon name={open ? "x" : "menu"} /></button>
@@ -1286,9 +1294,9 @@ function GamePage({
           </section>
           <section className="chart-panel">
             <SectionHeader eyebrow="DADOS DISPONÍVEIS" title="Histórico de preço" />
-            {platformFilter === "Xbox" || platformFilter === "PlayStation" ? <p className="sync-warning">O GameHunter não disponibiliza histórico de preços por console nesta integração.</p> : historicalLow ? <div className="history-low"><span>Menor preço registrado pela fonte</span><strong>{historicalLow.price}</strong><small>{historicalLow.date ? new Date(historicalLow.date * 1000).toLocaleDateString("pt-BR") : "Data indisponível"}</small></div> : <p className="sync-warning">A fonte atual não disponibiliza uma série histórica completa para este jogo.</p>}
-            {(platformFilter === "Steam" || platformFilter === "Steam Cloud") && <p className="offer-source-note">O menor preço registrado pode ser uma conversão estimada e não confirma disponibilidade atual.</p>}
-            {steamDetails?.releaseDate && <p className="detail-fact"><span>Lançamento</span><strong>{steamDetails.releaseDate}</strong></p>}
+            {platformFilter === "Xbox" || platformFilter === "PlayStation" ? <p className="sync-warning">O GameHunter não disponibiliza histórico de preços por console nesta integração.</p> : historicalLow ? <div className="history-low"><span>Menor preço registrado pela fonte</span><strong>{historicalLow.price}</strong><small>{historicalLow.date ? new Date(historicalLow.date * 1000).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "Data indisponível"}</small></div> : <p className="sync-warning">A fonte atual não disponibiliza uma série histórica completa para este jogo.</p>}
+            {(platformFilter === "Steam" || platformFilter === "Steam Cloud") && <p className="offer-source-note" style={{ marginTop: 12 }}>O menor preço registrado pode ser uma conversão estimada e não confirma disponibilidade atual.</p>}
+            {steamDetails?.releaseDate && <p className="detail-fact"><span>Lançamento</span><strong>{new Date(steamDetails.releaseDate).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })}</strong></p>}
             {steamDetails?.publishers.length ? <p className="detail-fact"><span>Publicadora</span><strong>{steamDetails.publishers.join(", ")}</strong></p> : null}
           </section>
         </div>
@@ -1367,7 +1375,7 @@ function AlertsPage({ alerts, onCreate, onDelete, onToggle, games, favorites, co
                     : currentPrice ? "MONITORANDO" : "AGUARDANDO OFERTA";
               return <div className="alert-card" key={alert.id}><img src={game?.image ?? images.digital} alt="" /><div className="alert-main"><StoreTag>{alert.platform}</StoreTag><h3>{alert.title}</h3><div className="target"><span>Preço-alvo<strong>R$ {alert.target}</strong></span><Icon name="arrow" /><span>Preço atual<strong>{currentPrice ?? "Sem oferta ativa"}</strong></span></div><small className="alert-check-time">{consoleResult ? consoleResult.error ? "Falha na consulta. Tentaremos novamente." : formatCheckedAt(consoleResult.checkedAt) : alert.platform === "Steam" ? "Verificação automática a cada 5 minutos, enquanto o site está aberto." : ""}</small></div><div className="alert-status"><span className={alert.enabled ? "" : "paused"}><i />{status}</span><button aria-label={`Opções do alerta de ${alert.title}`} aria-expanded={alertMenu === alert.id} onClick={() => setAlertMenu(alertMenu === alert.id ? null : alert.id)}>•••</button>{alertMenu === alert.id && <div className="alert-menu"><button onClick={() => { onToggle(alert.id); setAlertMenu(null); }}><Icon name="bell" />{alert.enabled ? "Pausar alerta" : "Retomar alerta"}</button><button className="danger" onClick={() => { onDelete(alert.id); setAlertMenu(null); }}><Icon name="trash" />Excluir alerta</button></div>}</div></div>;
             })}
-            {!alerts.length && <div className="empty-list"><h2>Você ainda não tem alertas</h2><p>Escolha um jogo e defina o preço que gostaria de pagar.</p></div>}
+            {!alerts.length && <p className="sync-warning">Nenhum alerta salvo.</p>}
           </div>
         </section>
 
@@ -1489,13 +1497,137 @@ function ProfilePage({ email, name, favorites, alerts, cartCount, notificationsE
   </div></main>;
 }
 
+function AboutPage({ go }: { go: (page: Page) => void }) {
+  return (
+    <main className="catalog-page">
+      <div className="container">
+        <div className="page-title"><span className="eyebrow">GAMEPING</span><h1>Sobre</h1><p>Conheça o projeto e como ele funciona.</p></div>
+        <button className="detail-back" onClick={() => go("home")}>← Voltar às promoções</button>
+        <div className="info-page-content">
+          <section className="info-section">
+            <h2>O que é o GamePing?</h2>
+            <p>O GamePing é um protótipo de site que reúne promoções ativas de jogos e jogos grátis em um só lugar. As ofertas da Steam são consultadas pela API pública CheapShark. A seção de jogos grátis combina ofertas temporárias da GamerPower, filtradas para Steam, Xbox e PlayStation, com jogos free-to-play permanentes da busca oficial da Steam.</p>
+          </section>
+          <section className="info-section">
+            <h2>Preços e conversão</h2>
+            <p>Os valores recebidos em dólares são convertidos para reais pela cotação USD/BRL. São estimativas e não necessariamente os preços regionais cobrados pelas lojas. O GamePing atualiza os dados a cada cinco minutos, remove promoções inativas e ignora jogos grátis com prazo encerrado.</p>
+          </section>
+          <section className="info-section">
+            <h2>Dados locais</h2>
+            <p>Lista de desejos, carrinho, preferências, recomendações e sessão de login de demonstração ficam salvos somente no navegador atual. Login real, sincronização entre dispositivos e avisos quando o site estiver fechado exigem um backend.</p>
+          </section>
+          <section className="info-section">
+            <h2>Fontes de dados</h2>
+            <ul>
+              <li><strong>CheapShark</strong> — promoções ativas da Steam</li>
+              <li><strong>GamerPower</strong> — jogos grátis temporários (Steam, Xbox, PlayStation)</li>
+              <li><strong>Steam</strong> — jogos free-to-play permanentes, artes, detalhes e trailers</li>
+              <li><strong>GameHunter</strong> — preços de Xbox Store e PlayStation Store</li>
+              <li><strong>YouTube</strong> — trailers alternativos quando não há vídeo na Steam</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+      <Footer />
+    </main>
+  );
+}
+
+function HowPage({ go }: { go: (page: Page) => void }) {
+  return (
+    <main className="catalog-page">
+      <div className="container">
+        <div className="page-title"><span className="eyebrow">GAMEPING</span><h1>Como funciona</h1><p>Entenda como o GamePing busca e exibe as ofertas.</p></div>
+        <button className="detail-back" onClick={() => go("home")}>← Voltar às promoções</button>
+        <div className="info-page-content">
+          <section className="info-section">
+            <h2>Busca de promoções</h2>
+            <p>A busca fica ao lado da marca no cabeçalho, sugere somente jogos enquanto o usuário digita e verifica promoções ativas. Quando não há desconto, mostra o preço normal informado pelas lojas consultadas. A busca também permite salvar jogos para acompanhar.</p>
+          </section>
+          <section className="info-section">
+            <h2>Página de um jogo</h2>
+            <p>Ao selecionar um card, o GamePing abre uma página com ofertas atuais da Steam e preços de consoles. A integração GameHunter busca preços de Xbox e PlayStation, mas só exibe ofertas recentes e em estoque de links oficiais da Xbox Store e PlayStation Store. O GamePing confere o título do jogo antes de exibir ofertas para evitar misturar edições ou jogos diferentes.</p>
+          </section>
+          <section className="info-section">
+            <h2>Steam Cloud</h2>
+            <p>A aba Steam Cloud indica se o jogo tem suporte a salvamentos sincronizados segundo os dados da Steam. Não é uma loja nem uma modalidade de compra separada — usa a mesma oferta da Steam normal.</p>
+          </section>
+          <section className="info-section">
+            <h2>Prévias de vídeo</h2>
+            <p>O GamePing tenta primeiro encontrar um trailer na Steam e usa gameplays do YouTube como alternativa. A reprodução Steam usa uma faixa HLS leve ou MP4. Os vídeos do YouTube são reproduzidos em iframe sem controles. Quando nenhuma fonte fornece uma prévia correspondente, nenhum vídeo de outro jogo é usado como substituto.</p>
+          </section>
+          <section className="info-section">
+            <h2>Alertas de preço</h2>
+            <p>Os avisos do navegador comparam os jogos salvos e os alertas de preço com as promoções consultadas. Notificações do sistema exigem permissão do navegador e funcionam enquanto o site está aberto.</p>
+          </section>
+          <section className="info-section">
+            <h2>Recomendações</h2>
+            <p>As recomendações combinam acessos anteriores a jogos e lojas com o volume público de avaliações. Categorias são estimadas a partir dos nomes dos jogos, pois as fontes atuais não fornecem gêneros consistentes.</p>
+          </section>
+        </div>
+      </div>
+      <Footer />
+    </main>
+  );
+}
+
+function HelpPage({ go }: { go: (page: Page) => void }) {
+  const faqs: { q: string; a: string }[] = [
+    { q: "Os preços são exatos?", a: "Não. Os valores em reais são estimativas convertidas a partir de preços em dólares pela cotação USD/BRL. O preço final e a disponibilidade devem ser confirmados diretamente na loja." },
+    { q: "Por que um jogo aparece sem promoção?", a: "O GamePing exibe o preço normal quando não há desconto ativo. Salve o jogo na lista de desejos ou crie um alerta para ser avisado quando entrar em promoção." },
+    { q: "Como funcionam os alertas de preço?", a: "Defina um preço-alvo na Central de Alertas. O GamePing consulta as lojas a cada 5 minutos enquanto o site está aberto e envia uma notificação do navegador quando o preço atingir o valor desejado." },
+    { q: "Meus dados ficam salvos?", a: "Lista de desejos, carrinho, alertas e preferências ficam salvos somente no navegador atual via localStorage. Não há sincronização entre dispositivos nem armazenamento em servidor." },
+    { q: "O login é real?", a: "Não. O login é uma demonstração local. Nenhuma senha é armazenada ou verificada por um servidor. A sessão fica apenas neste navegador." },
+    { q: "Por que alguns jogos não têm prévia de vídeo?", a: "O GamePing busca trailers na Steam e, como alternativa, no YouTube. Se nenhuma fonte encontrar um vídeo correspondente ao jogo, nenhuma prévia é exibida." },
+    { q: "Os preços de Xbox e PlayStation são oficiais?", a: "O GamePing usa a API do GameHunter e exibe apenas ofertas recentes e em estoque de links oficiais da Xbox Store e PlayStation Store. Marketplaces e revendedores não são apresentados como preços oficiais." },
+    { q: "O que é Steam Cloud neste contexto?", a: "Steam Cloud é um recurso de sincronização de salvamentos, não uma loja separada. A aba indica se o jogo suporta esse recurso; a compra é feita normalmente pela Steam." },
+  ];
+  return (
+    <main className="catalog-page">
+      <div className="container">
+        <div className="page-title"><span className="eyebrow">GAMEPING</span><h1>Ajuda</h1><p>Perguntas frequentes sobre o GamePing.</p></div>
+        <button className="detail-back" onClick={() => go("home")}>← Voltar às promoções</button>
+        <div className="info-page-content">
+          <div className="faq-list">
+            {faqs.map(({ q, a }) => (
+              <details key={q} className="faq-item">
+                <summary>{q}</summary>
+                <p>{a}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </div>
+      <Footer />
+    </main>
+  );
+}
+
+let footerNavigate: (page: Page) => void = () => {};
+
 function Footer() {
-  return <footer><div className="container footer-inner"><div><div className="logo"><span className="logo-mark">G</span><span>GAME<span>PING</span></span></div><p>As melhores ofertas de jogos, direto no seu radar.</p><div className="social-links"><button aria-label="Instagram"><Icon name="instagram" /></button><button aria-label="Discord"><Icon name="discord" /></button><button aria-label="X"><span>𝕏</span></button><button aria-label="YouTube"><Icon name="youtube" /></button></div></div><div className="footer-links"><span>EXPLORAR</span><button>Promoções</button><button>Jogos grátis</button><button>Lançamentos</button></div><div className="footer-links"><span>GAMEPING</span><button>Sobre</button><button>Como funciona</button><button>Ajuda</button></div><div className="newsletter"><span>OFERTAS NA SUA CAIXA</span><p>Um resumo semanal. Sem spam.</p><div className="input"><Icon name="mail" /><input placeholder="seu@email.com" /><Button><Icon name="arrow" /></Button></div></div></div><div className="container copyright">© 2026 GamePing. Preços atualizados automaticamente.<span>Brasil · Português</span></div></footer>;
+  const [newsletterEmail, setNewsletterEmail] = useState("");
+  const [newsletterSubscribed, setNewsletterSubscribed] = useState(false);
+  const [newsletterError, setNewsletterError] = useState("");
+  const socialLinks = [
+    { name: "YouTube", url: "https://www.youtube.com" },
+  ];
+  const subscribe = () => {
+    const email = newsletterEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setNewsletterError("Digite um e-mail válido para receber as ofertas.");
+      return;
+    }
+    setNewsletterError("");
+    setNewsletterSubscribed(true);
+  };
+  return <footer><div className="container footer-inner"><div><button className="logo" onClick={() => footerNavigate("home")} aria-label="GamePin início: voltar às promoções"><span className="logo-mark">G</span><span>GAME<span>PING</span></span></button><p>As melhores ofertas de jogos, direto no seu radar.</p><div className="social-links">{socialLinks.map((social) => <a key={social.name} href={social.url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir o GamePing no ${social.name} em uma nova aba`}><Icon name={social.name === "X" ? "x" : social.name.toLowerCase() as IconName} /></a>)}</div></div><div className="footer-links"><span>EXPLORAR</span><button onClick={() => footerNavigate("home")}>Promoções</button><button onClick={() => footerNavigate("free")}>Jogos grátis</button><button onClick={() => footerNavigate("new")}>Lançamentos</button></div><div className="footer-links"><span>GAMEPING</span><button onClick={() => footerNavigate("about")}>Sobre</button><button onClick={() => footerNavigate("how")}>Como funciona</button><button onClick={() => footerNavigate("help")}>Ajuda</button></div><div className="newsletter"><span>OFERTAS NA SUA CAIXA</span>{newsletterSubscribed ? <p role="status">Inscrição confirmada! Você receberá o resumo semanal no seu e-mail.</p> : <><p>Um resumo semanal. Sem spam.</p><form className="input" onSubmit={(event) => { event.preventDefault(); subscribe(); }}><Icon name="mail" /><input type="email" aria-label="E-mail para receber o resumo semanal de ofertas" placeholder="seu@email.com" value={newsletterEmail} onChange={(event) => { setNewsletterEmail(event.target.value); setNewsletterError(""); }} /><Button ariaLabel="Confirmar inscrição no resumo semanal" onClick={subscribe}><Icon name="arrow" /></Button></form>{newsletterError && <p className="newsletter-error" role="alert">{newsletterError}</p>}</>}</div></div><div className="container copyright">© 2026 GamePing. Preços atualizados automaticamente.<span>Brasil · Português</span></div></footer>;
 }
 
 export default function App() {
   const [page, setPage] = useState<Page>("home");
   const [collectionKey, setCollectionKey] = useState<CollectionKey>("offers");
+  useEffect(() => { footerNavigate = go; }, []);
   const [query, setQuery] = useState("");
   const [selectedGame, setSelectedGame] = useState<PromoGame | null>(null);
   const [alertGame, setAlertGame] = useState<PromoGame | null>(null);
@@ -1769,6 +1901,9 @@ export default function App() {
       {!query.trim() && page === "wishlist" && <WishlistPage favorites={favorites} toggleFavorite={guardedFavorite} go={go} games={games} onVisit={visitGame} cartIds={cart.map((item) => item.gameId)} toggleCart={guardedCart} />}
       {!query.trim() && page === "cart" && <CartPage cart={cart} games={games} removeFromCart={(gameId) => setCart((current) => current.filter((item) => item.gameId !== gameId))} onBuy={guardedBuy} />}
       {!query.trim() && page === "collection" && <CollectionPage collection={collectionKey} games={games} recommendations={recommendations} freeGames={freeGames} favorites={favorites} cartIds={cart.map((item) => item.gameId)} category={category} sortOrder={sortOrder} loading={loading} error={[dealsError, freeGamesError].filter(Boolean).join(" ")} onBack={() => go("home")} onVisit={visitGame} onBuy={guardedBuy} onFavorite={guardedFavorite} toggleCart={guardedCart} />}
+      {!query.trim() && page === "about" && <AboutPage go={go} />}
+      {!query.trim() && page === "how" && <HowPage go={go} />}
+      {!query.trim() && page === "help" && <HelpPage go={go} />}
       {!query.trim() && page === "profile" && <ProfilePage email={accountEmail} name={accountName} favorites={favorites.length} alerts={alerts.length} cartCount={cart.length} notificationsEnabled={notificationsEnabled} notificationMessage={notificationMessage} onNotificationsToggle={(value) => void toggleNotifications(value)} go={go} onAuthenticate={(email, name) => { setAccountEmail(email); if (name) setAccountName(name); }} onLogout={() => { setAccountEmail(""); go("home"); }} />}
       {modal && <Modal type={modal} close={() => { setModal(null); setAlertGame(null); setPendingAction(null); }} onSuccess={createAlert} onLogin={(email) => { setAccountEmail(email); setModal(null); pendingAction?.(); setPendingAction(null); }} alertGame={alertGame} />}
       <div className={toast ? "toast show" : "toast"}><span><Icon name="check" /></span><div><strong>Alerta criado!</strong><p>Vamos avisar quando o preço baixar.</p></div><button onClick={() => setToast(false)}><Icon name="x" /></button></div>
